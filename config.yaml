@@ -1,0 +1,84 @@
+# =====================================================================
+#  Suivi de l'indexation dans le SAE MULCV — CEIBA ANALYTICS
+#  Les secrets (clé Resend…) se mettent dans .env, jamais ici.
+# =====================================================================
+
+projet:
+  nom: "Indexation des archives — MULCV"
+  client: "Ministère (MULCV)"
+  fuseau_horaire: "Africa/Abidjan"
+  date_debut: "2026-10-28"          # début de l'indexation (plan de classement V3 du 28/10/2026)
+
+# Périmètre : dossier Scan surveillé par le service Scan (scan.root dans application.properties)
+#   <site>/documentLibrary/Scan/Production/<zone>/<conteneur>/<carton>/<dossier>/<pièce>
+perimetre:
+  site: "mulcv"
+  dossier_scan: "Scan"
+  racine_scan_uuid: "20bb0608-427e-40e7-bb06-08427eb0e773"   # vide = recherche par nom
+  racine_production: "Production"
+  exclure_conteneurs: "^(?:ESSAI|TEST)"   # expression régulière : conteneurs de test exclus des chiffres
+  comptes_techniques: "^(?:service-account-|worker$|admin$|System$)"   # jamais comptés comme indexeurs
+
+objectifs:                          # à ajuster par la direction de projet
+  pieces_indexees_par_jour: 600     # pièces validées (toutes personnes confondues)
+  pieces_par_indexeur_jour: 200
+  temps_cible_s: 120                # temps médian visé par pièce
+  stock_age_alerte_jours: 3         # pièce à indexer en attente depuis plus de N jours ouvrés -> attention
+  seuil_correction: 0.40            # part des pièces corrigées au-delà de laquelle l'analyse automatique est signalée
+
+mesure:
+  session_max_min: 20               # écart maximal entre deux validations d'un même indexeur pour mesurer un temps
+  temps_min_s: 5                    # en dessous : validation en lot, non retenue comme temps d'indexation
+
+calendrier:
+  heure_debut: "08:00"
+  heure_fin: "17:30"
+  jours_ouvres: [0, 1, 2, 3, 4]     # 0 = lundi
+  jours_feries:
+    - "2026-11-15"
+    - "2026-12-25"
+    - "2027-01-01"
+
+rapport:
+  indexeurs_max: 15
+  rubriques_max: 8
+  auteur: "Idriss Bado Olivier"
+  societe: "CEIBA Analytics"
+
+# Source :
+#   "serveur" : lecture sur le serveur du SAE (base Alfresco + journal du service Scan), lecture seule
+#   "demo"    : données simulées, signalées dans le rapport
+source:
+  type: "serveur"
+  alfresco_sql:                     # vide = détection automatique du conteneur PostgreSQL contenant alf_node
+    conteneur: ""
+    base: ""
+    utilisateur: ""
+  journal_scan:
+    actif: true                     # false = mode dégradé (Alfresco seul : validateur ≈ dernier modificateur)
+    conteneur: ""                   # vide = conteneur dont le nom ou l'image contient « mulcv-scan »
+    fichier: "/data/scan.mv.db"
+    jar: "/app/app.jar"
+
+email:
+  expediteur: "CEIBA Analytics · Indexation SAE <indexation@ceiba-analytics.com>"
+  destinataires:
+    - md@ceiba-analytics.com
+    - dac@ceiba-analytics.com
+    - dac01@ceiba-analytics.com
+    - dac03@ceiba-analytics.com
+    - daf@ceiba-analytics.com
+    - dao@ceiba-analytics.com
+    - dao01@ceiba-analytics.com
+  copie: []
+  alerte_technique:                 # reçoit seul l'alerte si la collecte échoue (aucun rapport faux diffusé)
+    - dao@ceiba-analytics.com
+  repondre_a: "destinataires"
+  resend:                           # clé dans .env : RESEND_API_KEY ; domaine ceiba-analytics.com vérifié
+    url: "https://api.resend.com/emails"
+    timeout_s: 30
+    tentatives: 3
+
+stockage:
+  base_sqlite: "data/indexation.db"
+  dossier_sortie: "out"

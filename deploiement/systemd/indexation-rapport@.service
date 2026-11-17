@@ -1,0 +1,18 @@
+[Unit]
+Description=Rapport d'indexation SAE (%i)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# root : lecture de la base Alfresco et du journal du service Scan par « docker » (lecture seule)
+User=root
+WorkingDirectory=/opt/statisticindexation
+Environment=TZ=Africa/Abidjan
+Environment=MPLCONFIGDIR=/opt/statisticindexation/data/.matplotlib
+ExecStart=/opt/statisticindexation/.venv/bin/python /opt/statisticindexation/rapport_indexation.py %i
+StandardOutput=append:/opt/statisticindexation/journal/%i.log
+StandardError=append:/opt/statisticindexation/journal/%i.log
+TimeoutStartSec=900
+NoNewPrivileges=true
+PrivateTmp=true

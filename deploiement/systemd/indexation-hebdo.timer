@@ -1,0 +1,10 @@
+[Unit]
+Description=Récapitulatif hebdomadaire d'indexation (vendredi 18h20)
+
+[Timer]
+OnCalendar=Fri *-*-* 18:20:00 Africa/Abidjan
+Unit=indexation-rapport@hebdo.service
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light only"><title>{{ titre }}</title></head>
+{% macro tableau(t) %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12.5px;border-collapse:collapse;">
+    <tr style="color:#52514e;">{% for h in t.entetes %}<td {% if h.d %}align="right"{% endif %} style="padding:6px 4px;border-bottom:1px solid #d9d8d2;{% if h.w %}width:{{ h.w }}px;{% endif %}">{{ h.l }}</td>{% endfor %}</tr>
+    {% for row in t.lignes %}<tr>{% for c in row %}
+      {% if c.barre is defined %}<td style="padding:6px 4px;border-bottom:1px solid #efeee9;"><div style="width:{{ c.barre }}px;max-width:70px;background:#2a78d6;height:8px;border-radius:0 4px 4px 0;font-size:0;line-height:0;">&nbsp;</div></td>
+      {% else %}<td {% if t.entetes[loop.index0].d %}align="right"{% endif %} style="padding:6px 4px;border-bottom:1px solid #efeee9;{% if c.g %}font-weight:700;{% endif %}">{{ c.v }}{% if c.s %}<div style="font-size:11px;color:#7a7974;font-weight:400;">{{ c.s }}</div>{% endif %}</td>{% endif %}
+    {% endfor %}</tr>{% endfor %}
+    {% if t.total %}<tr style="font-weight:700;">{% for c in t.total %}<td {% if t.entetes[loop.index0].d %}align="right"{% endif %} style="padding:7px 4px;">{{ c }}</td>{% endfor %}</tr>{% endif %}
+  </table>
+  {% if t.note %}<div style="font-size:11px;color:#7a7974;padding-top:4px;line-height:1.45;">{{ t.note }}</div>{% endif %}
+{% endmacro %}
+{% macro section(titre, sous=None) %}
+  <div style="font-size:16px;font-weight:700;">{{ titre }}</div>
+  {% if sous %}<div style="font-size:12.5px;color:#52514e;padding:2px 0 8px;">{{ sous }}</div>{% else %}<div style="height:8px;"></div>{% endif %}
+{% endmacro %}
+<body style="margin:0;padding:0;background:#f1f0ec;font-family:Inter,Segoe UI,Arial,sans-serif;color:#0b0b0b;">
+<div style="display:none;max-height:0;overflow:hidden;">{{ preheader }}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f0ec;"><tr><td align="center" style="padding:20px 8px;">
+<table role="presentation" width="680" cellpadding="0" cellspacing="0" style="width:680px;max-width:100%;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e3e2dc;">
+
+<tr><td style="background:#13293d;padding:22px 28px;">
+  <table role="presentation" width="100%"><tr>
+    <td style="color:#9fb3c8;font-size:12px;letter-spacing:.08em;text-transform:uppercase;">{{ projet }} · {{ client }}</td>
+    <td align="right" style="color:#9fb3c8;font-size:12px;">CEIBA Analytics</td></tr>
+  <tr><td colspan="2" style="color:#ffffff;font-size:22px;font-weight:700;padding-top:6px;">{{ titre }}</td></tr>
+  <tr><td colspan="2" style="color:#d5dee8;font-size:13px;padding-top:4px;">{{ sous_titre }}</td></tr>
+  {% if auteur %}<tr><td colspan="2" style="color:#ffffff;font-size:12.5px;padding-top:10px;">
+    Rapport conçu et développé par <b>{{ auteur }}</b>{% if societe %} · {{ societe }}{% endif %}</td></tr>{% endif %}</table>
+</td></tr>
+
+{% if demo or degrade or rectificatif %}<tr><td style="padding:14px 26px 0;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff1d6;border-left:4px solid #d98a00;border-radius:4px;"><tr>
+  <td style="padding:10px 14px;font-size:13px;color:#6b4500;line-height:1.5;">
+  {% if rectificatif %}<b>Rectificatif.</b> {{ rectificatif }}{% endif %}
+  {% if demo %}<b>Données de démonstration.</b> Ce rapport n'est pas issu du SAE.{% endif %}
+  {% if degrade %}<b>Mode dégradé.</b> Journal du service Scan non lu : indexeur = dernier modificateur Alfresco, temps approximatifs.{% endif %}
+  </td></tr></table>
+</td></tr>{% endif %}
+{% if pieces_jointes %}<tr><td style="padding:12px 26px 0;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e5effb;border-radius:8px;"><tr>
+  <td style="padding:9px 14px;font-size:12.5px;color:#1e3a5f;">📎 <b>En pièce jointe</b> : {{ pieces_jointes }}</td></tr></table>
+</td></tr>{% endif %}
+
+<tr><td style="padding:22px 20px 6px 20px;">
+  <div style="font-size:12px;color:#52514e;text-transform:uppercase;letter-spacing:.06em;padding:0 8px 10px;">{{ libelle_production }}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+  {% for t in tuiles %}
+    <td width="25%" valign="top" style="padding:0 6px;">
+      <table role="presentation" width="100%" style="border:1px solid #e3e2dc;border-radius:8px;"><tr><td style="padding:14px 12px 12px;">
+        <div style="font-size:12px;color:#52514e;">{{ t.libelle }}</div>
+        <div style="font-size:24px;font-weight:700;line-height:1.15;padding-top:4px;white-space:nowrap;">{{ t.valeur }}</div>
+        {% if t.taux is not none %}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;"><tr>
+          <td style="background:#e6e5e0;height:6px;border-radius:3px;font-size:0;line-height:0;">
+            <div style="width:{{ t.barre }}%;background:#2a78d6;height:6px;border-radius:3px;font-size:0;line-height:0;">&nbsp;</div></td></tr></table>
+        <div style="font-size:11.5px;color:#52514e;padding-top:5px;">{{ t.taux_txt }}</div>
+        {% endif %}
+        {% if t.comp %}<div style="font-size:11.5px;color:#52514e;padding-top:3px;line-height:1.4;">{{ t.comp }}</div>{% endif %}
+      </td></tr></table>
+    </td>
+  {% endfor %}
+  </tr></table>
+</td></tr>
+
+<tr><td style="padding:10px 20px 4px 20px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+  {% for t in tuiles_q %}
+    <td width="25%" valign="top" style="padding:0 6px;">
+      <table role="presentation" width="100%" style="background:#f7f7f4;border-radius:8px;"><tr><td style="padding:10px 12px;">
+        <div style="font-size:11.5px;color:#52514e;">{{ t.libelle }}</div>
+        <div style="font-size:18px;font-weight:700;padding-top:2px;">{{ t.valeur }}</div>
+        <div style="font-size:11px;color:#52514e;padding-top:1px;line-height:1.4;">{{ t.detail }}</div>
+      </td></tr></table>
+    </td>
+  {% endfor %}
+  </tr></table>
+</td></tr>
+
+<tr><td style="padding:20px 26px 6px;">
+  <div style="font-size:16px;font-weight:700;padding-bottom:10px;">Lecture de l'analyste</div>
+  {% for p in points %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:8px;border-left:4px solid {{ p.couleur }};background:#fafaf8;"><tr>
+    <td style="padding:9px 12px;">
+      <span style="display:inline-block;font-size:11px;font-weight:700;color:{{ p.couleur_txt }};background:{{ p.fond }};border-radius:10px;padding:2px 8px;">{{ p.symbole }} {{ p.etiquette }}</span>
+      <span style="font-size:13.5px;font-weight:700;padding-left:6px;">{{ p.titre }}</span>
+      <div style="font-size:13px;color:#2f2e2b;line-height:1.5;padding-top:4px;">{{ p.texte }}</div>
+    </td></tr></table>
+  {% else %}<div style="font-size:13px;color:#52514e;">Aucun point particulier.</div>{% endfor %}
+</td></tr>
+
+<tr><td style="padding:16px 26px 4px;">
+  {{ section(g1_titre, g1_sous_titre) }}
+  <img src="cid:g_activite" width="628" alt="{{ g1_titre }}" style="display:block;width:100%;max-width:628px;height:auto;border:0;">
+</td></tr>
+
+<tr><td style="padding:18px 26px 4px;">
+  {{ section(t_ind.titre, "Qui a indexé, combien, en combien de temps") }}
+  {{ tableau(t_ind) }}
+</td></tr>
+
+{% if g_temps %}<tr><td style="padding:18px 26px 4px;">
+  {{ section("Temps pour indexer une pièce", "Répartition des temps mesurés sur la période") }}
+  <img src="cid:g_temps" width="628" alt="Répartition des temps d'indexation" style="display:block;width:100%;max-width:628px;height:auto;border:0;">
+</td></tr>{% endif %}
+
+<tr><td style="padding:18px 26px 4px;">
+  {{ section("Tendance sur 20 jours ouvrés", "Pièces indexées par jour") }}
+  <img src="cid:g_tendance" width="628" alt="Pièces indexées par jour" style="display:block;width:100%;max-width:628px;height:auto;border:0;">
+  <div style="font-size:12.5px;color:#52514e;padding:12px 0 6px;">Pièces restant à indexer en fin de journée</div>
+  <img src="cid:g_stock" width="628" alt="Stock à indexer" style="display:block;width:100%;max-width:628px;height:auto;border:0;">
+</td></tr>
+
+<tr><td style="padding:18px 26px 4px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+    <td width="52%" valign="top" style="padding-right:12px;">{{ section(t_etats.titre) }}{{ tableau(t_etats) }}</td>
+    <td width="48%" valign="top" style="padding-left:12px;">{{ section(t_age.titre) }}{{ tableau(t_age) }}</td>
+  </tr></table>
+</td></tr>
+
+<tr><td style="padding:18px 26px 4px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+    <td width="52%" valign="top" style="padding-right:12px;">{{ section(t_champs.titre) }}{{ tableau(t_champs) }}</td>
+    <td width="48%" valign="top" style="padding-left:12px;">{{ section(t_anom.titre) }}{{ tableau(t_anom) }}</td>
+  </tr></table>
+</td></tr>
+
+{% if t_rub.lignes %}<tr><td style="padding:18px 26px 4px;">
+  {{ section(t_rub.titre) }}{{ tableau(t_rub) }}
+</td></tr>{% endif %}
+
+<tr><td style="padding:22px 20px 4px;">
+  <div style="font-size:16px;font-weight:700;padding:0 6px;">{{ vue.titre }}</div>
+  <div style="font-size:12.5px;color:#52514e;padding:2px 6px 10px;">{{ vue.sous_titre }}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+  {% for t in vue.tuiles %}
+    <td width="25%" valign="top" style="padding:0 6px;">
+      <table role="presentation" width="100%" style="border:1px solid #e3e2dc;border-radius:8px;"><tr><td style="padding:12px 12px 10px;">
+        <div style="font-size:11.5px;color:#52514e;">{{ t.libelle }}</div>
+        <div style="font-size:20px;font-weight:700;padding-top:3px;">{{ t.valeur }}</div>
+        {% if t.barre is defined %}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:7px;"><tr>
+          <td style="background:#e6e5e0;height:6px;border-radius:3px;font-size:0;line-height:0;">
+            <div style="width:{{ [t.barre, 2]|max }}%;background:#2a78d6;height:6px;border-radius:3px;font-size:0;line-height:0;">&nbsp;</div></td></tr></table>{% endif %}
+        <div style="font-size:11px;color:#52514e;padding-top:4px;">{{ t.detail }}</div>
+      </td></tr></table>
+    </td>
+  {% endfor %}
+  </tr></table>
+</td></tr>
+
+<tr><td style="padding:22px 26px 22px;">
+  <div style="border-top:1px solid #e3e2dc;padding-top:12px;font-size:11.5px;color:#7a7974;line-height:1.55;">
+    <b>Méthode.</b> Une pièce est indexée lorsque ses métadonnées sont validées par un indexeur dans Share (contrôle des droits,
+    de la complétude et de l'empreinte SHA-256) ; elle est comptée une fois, à sa première validation. Le temps d'indexation est
+    l'écart entre deux validations successives d'un même indexeur (pièces enchaînées), entre 5 s et {{ session }} min ;
+    la première pièce d'une session n'est pas mesurée. Les comptes techniques (postes de scan, analyse automatique) ne sont
+    jamais comptés comme indexeurs.<br>
+    Source : {{ source }} · généré le {{ genere }} · prochain envoi : {{ prochain }}.<br>
+    Répondre à ce message écrit à toute la liste de diffusion.
+  </div>
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>
