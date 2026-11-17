@@ -50,21 +50,51 @@ def test_corrections_ignorent_les_proprietes_techniques():
     assert I.corrections(prop, "{}") == []
 
 
-def test_temps_d_indexation_par_enchainement():
-    pieces = [piece(f"p{i}", etat="APPROVED") for i in range(5)]
-    evts = [evt(1, "p0", "METADATA_APPROVED", "awa", 9, 0),
-            evt(2, "p1", "METADATA_APPROVED", "awa", 9, 2),          # 120 s : mesuré
-            evt(3, "p2", "METADATA_APPROVED", "awa", 9, 2, 2),       # 2 s : validation en lot, non mesurée
-            evt(4, "p3", "METADATA_APPROVED", "awa", 10, 0),         # 58 min : nouvelle session
-            evt(5, "p4", "METADATA_APPROVED", "service-account-mulcv-scan-worker", 10, 1),  # compte technique exclu
-            evt(6, "p1", "METADATA_APPROVED", "awa", 10, 3)]         # reprise d'une pièce déjà indexée
+def test_indexation_est_l_enregistrement():
+    """Indexée = métadonnées enregistrées. Temps = écart entre deux pièces indexées par la même personne."""
+    pieces = [piece(f"p{i}", etat="APPROVED") for i in range(6)]
+    evts = [evt(1, "p0", "METADATA_SAVED", "awa", 9, 0),
+            evt(2, "p1", "METADATA_SAVED", "awa", 9, 2),
+            evt(3, "p1", "METADATA_SAVED", "awa", 9, 3),             # 2e enregistrement de p1 : p1 a pris 180 s
+            evt(4, "p1", "METADATA_APPROVED", "awa", 9, 3, 30),      # validation : ne crée pas d'indexation
+            evt(5, "p2", "METADATA_SAVED", "awa", 9, 3, 2),          # 2 s après p1 (2e enreg.) : en lot
+            evt(6, "p3", "METADATA_SAVED", "awa", 10, 0),            # 56 min : nouvelle session
+            evt(7, "p4", "METADATA_SAVED", "service-account-mulcv-scan-worker", 10, 1),  # compte technique exclu
+            evt(8, "p5", "METADATA_APPROVED", "kone", 10, 5),        # validée sans enregistrement daté : indexée à la validation
+            evt(9, "p0", "METADATA_SAVED", "kone", 10, 7)]           # reprise de p0 par une autre personne
     P, E, V = I.preparer(pieces, evts, {"awa": "Awa DIALLO"}, CFG)
-    assert list(V["acteur"].unique()) == ["awa"]
-    assert V["temps_s"].dropna().tolist() == [120.0, 180.0]
+    assert set(V["acteur"]) == {"awa", "kone"}
+    assert V[V["acteur"] == "awa"]["temps_s"].dropna().tolist() == [180.0]
+    assert V[V["acteur"] == "kone"]["temps_s"].dropna().tolist() == [120.0]
     assert int(V["en_lot"].sum()) == 1
+    x = P.set_index("id")
+    assert x.loc["p1", "indexe_le"] == datetime(2026, 11, 17, 9, 2) and x.loc["p1", "valide_le"] == datetime(2026, 11, 17, 9, 3, 30)
+    assert x.loc["p5", "indexe_par"] == "kone" and pd_isna(x.loc["p4", "indexe_le"])
     c = I.periode(P, E, V, datetime(2026, 11, 17), datetime(2026, 11, 18))
-    assert c["indexees"] == 4 and c["reprises"] == 1 and c["validations"] == 5
-    assert P.set_index("id").loc["p1", "valide_le"] == datetime(2026, 11, 17, 9, 2)
+    assert c["indexees"] == 5 and c["reprises"] == 1 and c["validees"] == 2
+    assert c["sources"] == {"version": 5, "validation": 1}
+
+
+def pd_isna(v):
+    import pandas as pd
+    return pd.isna(v)
+
+
+def test_enregistrements_depuis_alfresco():
+    """Versions Alfresco (exactes) et, à défaut, dernière modification d'une pièce non validée."""
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo("Africa/Abidjan")
+    pieces = [piece("a", modifie_le=datetime(2026, 11, 17, 9, 0), modifie_par="awa"),
+              piece("b", modifie_le=datetime(2026, 11, 17, 9, 5), modifie_par="awa"),
+              piece("c", etat="ARCHIVED", modifie_le=datetime(2026, 11, 17, 9, 9), modifie_par="awa")]
+    versions = [{"piece": "a", "le": "2026-11-17T08:58:00.000Z", "acteur": "awa", "version": "1.1"},
+                {"piece": "a", "le": "2026-11-17T09:00:00.000Z", "acteur": "awa", "version": "1.2"},
+                {"piece": "b", "le": "2026-11-17T02:00:00.000Z", "acteur": "service-account-mulcv-scan-worker", "version": "1.1"}]
+    tech = lambda a: a.startswith("service-account-")  # noqa: E731
+    ev = sources.evenements_enregistrement(pieces, versions, tz, 0, tech)
+    vu = sorted((e["piece"], e["le"].strftime("%H:%M"), e["acteur"], json.loads(e["details"])["source"]) for e in ev)
+    assert vu == [("a", "08:58", "awa", "version"), ("a", "09:00", "awa", "version"),
+                  ("b", "02:00", "service-account-mulcv-scan-worker", "version"), ("b", "09:05", "awa", "derniere_modification")]
 
 
 def test_stock_et_vieillissement():
@@ -145,6 +175,8 @@ def test_requetes_alfresco_sur_schema_reduit():
     assert p1["chemin"][:5] == ["Production", "Zone_Sud", "CNT-0001", "BOX 2", "FON-3302-113-0001-012"]
     assert p1["props"]["classCode"] == "3302" and p1["nom"].endswith("-P01.pdf")
     assert b.personnes() == {"awa": "Awa DIALLO"}
+    assert sorted((v["le"], v["acteur"], v["version"]) for v in b.versions(list(n))) == [
+        ("2026-11-17T08:58:00.000Z", "awa", "1.1"), ("2026-11-17T09:00:00.000Z", "awa", "1.2")]
     from zoneinfo import ZoneInfo
     pieces, _ = sources.assembler(list(n.values()), [], [], ZoneInfo("Africa/Abidjan"), [], "Production")
     evts = sources.evenements_degrades(list(n.values()), ZoneInfo("Africa/Abidjan"))

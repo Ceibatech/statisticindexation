@@ -211,6 +211,17 @@ WHERE q.local_name IN ('userName', 'firstName', 'lastName')
 GROUP BY n.id"""
 
 
+# Historique des versions (version2Store) : chaque version garde l'auteur et la date de la modification
+# figée (cm:modifier / cm:modified au moment de la version). Avec l'enregistrement des métadonnées en
+# version (autoVersionOnUpdateProps), chaque « Enregistrer » de Share y laisse une trace datée et signée.
+SQL_VERSIONS = """SELECT split_part(p.string_value, '/', 4), n.audit_modified, n.audit_modifier,
+       COALESCE((SELECT vl.string_value FROM alf_node_properties vl JOIN alf_qname qv ON qv.id = vl.qname_id
+                 WHERE vl.node_id = n.id AND qv.local_name = 'versionLabel' LIMIT 1), '')
+FROM alf_node n JOIN alf_store s ON s.id = n.store_id AND s.protocol = 'workspace' AND s.identifier = 'version2Store'
+JOIN alf_node_properties p ON p.node_id = n.id JOIN alf_qname q ON q.id = p.qname_id AND q.local_name = 'frozenNodeRef'
+WHERE split_part(p.string_value, '/', 4) = ANY('{{{ids}}}'::text[])"""
+
+
 def trouver_base_alfresco(pref: str | None = None) -> tuple[str, str, str]:
     """(conteneur, utilisateur, base) de la base PostgreSQL contenant alf_node."""
     noms = [pref] if pref else [l.split()[0] for l in _docker("ps", "--format", "{{.Names}} {{.Image}}").decode().splitlines()
@@ -260,6 +271,14 @@ class AlfrescoSql:
             out.append({"id": uuid, "chemin": [_decode(x) for x in chemin.split("/")] if chemin else None,
                         "cree_le": cree, "createur": createur, "modifie_le": modif, "modifieur": modifieur,
                         "props": _json(props), "nom": _decode(nom)})
+        return out
+
+    def versions(self, ids: list[str]) -> list[dict]:
+        ok = [i for i in ids if re.fullmatch(r"[0-9a-fA-F-]{36}", i or "")]
+        out = []
+        for k in range(0, len(ok), 5000):
+            for uuid, le, qui, label in self.sql(SQL_VERSIONS.format(ids=",".join(ok[k:k + 5000]))):
+                out.append({"piece": uuid, "le": le, "acteur": qui, "version": label})
         return out
 
     def personnes(self) -> dict[str, str]:
@@ -317,6 +336,41 @@ def assembler(noeuds: list[dict], jobs: list[dict], audit: list[dict], tz: ZoneI
     return pieces, evts
 
 
+def evenements_enregistrement(pieces: list[dict], versions: list[dict], tz: ZoneInfo, premier_id: int,
+                              technique=lambda a: False) -> list[dict]:
+    """Enregistrements des métadonnées (« Enregistrer » dans Share) : pas journalisés par le service Scan.
+    - versions Alfresco de la pièce créées par une personne : date et auteur exacts de chaque enregistrement ;
+    - à défaut, pour une pièce pas encore validée, sa dernière modification si elle est le fait d'une personne
+      (dernier enregistrement seulement) ;
+    - une pièce validée sans enregistrement visible est comptée à sa validation (la validation exige un
+      enregistrement préalable) : cette approximation est faite dans indicateurs.preparer."""
+    out, k = [], premier_id
+    vus = set()
+    for v in versions:
+        k += 1
+        cle = (v["piece"], v["le"], v["acteur"])
+        if cle in vus:
+            continue
+        vus.add(cle)
+        out.append({"id": k, "piece": v["piece"], "evenement": "METADATA_SAVED", "acteur": v["acteur"],
+                    "le": _dt(v["le"], tz), "details": json.dumps({"source": "version", "version": v.get("version")})})
+    derniere_version = {}
+    for e in out:
+        if not technique(e["acteur"] or ""):
+            derniere_version[e["piece"]] = max(derniere_version.get(e["piece"], e["le"]), e["le"])
+    for p in pieces:
+        dv = derniere_version.get(p["id"])
+        if dv is not None and p.get("modifie_le") and p["modifie_le"] <= dv + timedelta(seconds=5):
+            continue  # dernière modification déjà connue par l'historique des versions
+        if p.get("etat") not in ("REVIEW_REQUIRED", "ERROR", "QUEUED", "RETRY", "NON_SUIVI"):
+            continue
+        if p.get("modifie_le") and p.get("modifie_par"):
+            k += 1
+            out.append({"id": k, "piece": p["id"], "evenement": "METADATA_SAVED", "acteur": p["modifie_par"],
+                        "le": p["modifie_le"], "details": json.dumps({"source": "derniere_modification"})})
+    return out
+
+
 def evenements_degrades(noeuds: list[dict], tz: ZoneInfo) -> list[dict]:
     """Mode sans journal : validation = qualityStatus VERIFIED, par le dernier modificateur."""
     out = []
@@ -325,6 +379,11 @@ def evenements_degrades(noeuds: list[dict], tz: ZoneInfo) -> list[dict]:
             out.append({"id": i, "piece": n["id"], "evenement": "METADATA_APPROVED", "acteur": n.get("modifieur"),
                         "le": _dt(n.get("modifie_le"), tz), "details": "{}"})
     return out
+
+
+def _technique(cfg):
+    rx = re.compile(cfg["perimetre"].get("comptes_techniques") or r"^$")
+    return lambda a: bool(rx.search(a or ""))
 
 
 def collecter(cfg: dict, tz: ZoneInfo, maintenant: datetime | None = None) -> Collecte:
@@ -342,10 +401,14 @@ def collecter(cfg: dict, tz: ZoneInfo, maintenant: datetime | None = None) -> Co
         noeuds = alf.noeuds(racine, [j["node_id"] for j in jobs])
         pieces, evts = assembler(noeuds, jobs, audit, tz, [], per.get("racine_production", "Production"))
         mode = "journal"
+        evts += evenements_enregistrement(pieces, alf.versions([p["id"] for p in pieces]), tz, len(evts) + 10_000_000,
+                                          _technique(cfg))
     else:
         noeuds = alf.noeuds(racine, [])
         pieces, _ = assembler(noeuds, [], [], tz, [], per.get("racine_production", "Production"))
         evts = evenements_degrades(noeuds, tz)
+        evts += evenements_enregistrement(pieces, alf.versions([p["id"] for p in pieces]), tz, len(evts) + 10_000_000,
+                                          _technique(cfg))
         mode = "degrade"
     return Collecte(pieces, evts, alf.personnes(), mode)
 
@@ -446,6 +509,9 @@ class Demo:
                         evts.append({"id": eid, "piece": p["id"], "evenement": "ANALYSIS_REQUESTED", "acteur": u,
                                      "le": t - timedelta(seconds=20), "details": "{}"})
                     eid += 1
+                    evts.append({"id": eid, "piece": p["id"], "evenement": "METADATA_SAVED", "acteur": u,
+                                 "le": t - timedelta(seconds=rng.randint(4, 12)), "details": json.dumps({"source": "version"})})
+                    eid += 1
                     evts.append({"id": eid, "piece": p["id"], "evenement": "METADATA_APPROVED", "acteur": u, "le": t,
                                  "details": json.dumps({"category": p["_rub"]})})
                     p.update(etat="APPROVED", validation=json.dumps(val), rubrique=p["_rub"], statut_qualite="VERIFIED",
@@ -465,6 +531,9 @@ class Demo:
                     for x in file[:rng.randint(0, 1)]:
                         if x["_analyse"] < self.maintenant:
                             x.update(modifie_par=u, modifie_le=min(self.maintenant, datetime(j.year, j.month, j.day, 17, 20)))
+                            eid += 1
+                            evts.append({"id": eid, "piece": x["id"], "evenement": "METADATA_SAVED", "acteur": u,
+                                         "le": x["modifie_le"], "details": json.dumps({"source": "version"})})
             j += timedelta(days=1)
         for p in pieces:
             p.pop("_rub", None)

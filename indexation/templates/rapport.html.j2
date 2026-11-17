@@ -152,11 +152,12 @@
 
 <tr><td style="padding:22px 26px 22px;">
   <div style="border-top:1px solid #e3e2dc;padding-top:12px;font-size:11.5px;color:#7a7974;line-height:1.55;">
-    <b>Méthode.</b> Une pièce est indexée lorsque ses métadonnées sont validées par un indexeur dans Share (contrôle des droits,
-    de la complétude et de l'empreinte SHA-256) ; elle est comptée une fois, à sa première validation. Le temps d'indexation est
-    l'écart entre deux validations successives d'un même indexeur (pièces enchaînées), entre 5 s et {{ session }} min ;
-    la première pièce d'une session n'est pas mesurée. Les comptes techniques (postes de scan, analyse automatique) ne sont
-    jamais comptés comme indexeurs.<br>
+    <b>Méthode.</b> Une pièce est indexée lorsqu'un indexeur enregistre ses métadonnées dans Share (« Enregistrer ») ;
+    elle est comptée une fois, à son premier enregistrement, au nom de son auteur. La validation par l'archiviste (contrôle des
+    droits, de la complétude et de l'empreinte SHA-256) est suivie à part. Le temps d'indexation est l'écart entre deux pièces
+    indexées successivement par la même personne, entre 5 s et {{ session }} min ; la première pièce d'une session n'est pas
+    mesurée. Les comptes techniques (postes de scan, analyse automatique) ne sont jamais comptés comme indexeurs.
+    {{ datation }}<br>
     Source : {{ source }} · généré le {{ genere }} · prochain envoi : {{ prochain }}.<br>
     Répondre à ce message écrit à toute la liste de diffusion.
   </div>

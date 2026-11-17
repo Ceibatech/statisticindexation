@@ -83,8 +83,9 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
          "comp": (f"plus ancienne : {st['plus_ancien']:%d/%m %H:%M}" if st["plus_ancien"] is not None else "file vide")},
     ]
     tuiles_q = [
-        {"libelle": "Versées aux archives", "valeur": n(c["versees"]),
-         "detail": f"délai médian {duree((c['delai_versement_min'] or 0) * 60) if c['delai_versement_min'] is not None else '—'} après validation"},
+        {"libelle": "Validées par l'archiviste", "valeur": n(c["validees"]),
+         "detail": f"{n(c['versees'])} versées aux archives"
+                   + (f" · validation {duree(c['delai_validation_min'] * 60)} après" if c["delai_validation_min"] is not None else "")},
         {"libelle": "Attente avant indexation", "valeur": heures(c["delai_attente_h"]),
          "detail": f"médiane · 90 % en moins de {heures(c['delai_attente_p90_h'])}"},
         {"libelle": "Acceptées sans correction", "valeur": pct(c["sans_correction"]),
@@ -99,8 +100,8 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
 
     # Indexeurs
     I = r.indexeurs
-    entetes = [{"l": "Indexeur"}, {"l": "Pièces", "d": 1}, {"l": "Part", "w": 70}, {"l": "Temps médian", "d": 1},
-               {"l": "90 % <", "d": 1}, {"l": "Pièces/h", "d": 1}, {"l": "Corr./pièce", "d": 1},
+    entetes = [{"l": "Indexeur"}, {"l": "Indexées", "d": 1}, {"l": "Part", "w": 70}, {"l": "Temps médian", "d": 1},
+               {"l": "90 % <", "d": 1}, {"l": "Pièces/h", "d": 1}, {"l": "Validées", "d": 1},
                {"l": "Horaires", "d": 1}]
     lignes = []
     if not I.empty:
@@ -110,20 +111,21 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
             if not _nan(x.get("ref")) and "ref" in x:
                 sous.append(f"moy. {n(x['ref'])}/j")
             if x.get("en_cours"):
-                sous.append(f"{n(x['en_cours'])} saisie(s) non validée(s)")
+                sous.append(f"{n(x['en_cours'])} non validée(s)")
             lignes.append([{"v": x["nom"], "g": 1, "s": acteur if acteur != x["nom"] else None},
                            {"v": n(x["validations"]), "g": 1, "s": " · ".join(sous) or None},
                            {"barre": max(2, round(x["validations"] / mx * 70))},
                            {"v": duree(x["temps_med"]), "s": f"{n(x['mesures'])} mesurés"},
                            {"v": duree(x["temps_p90"])}, {"v": n(x["cadence"])},
-                           {"v": "—" if _nan(x["corrections"]) else f"{x['corrections']:.1f}".replace(".", ",")},
+                           {"v": n(x["validees"])},
                            {"v": f"{x['premiere']:%H:%M}–{x['derniere']:%H:%M}" if not hebdo else f"{x['premiere']:%d/%m}–{x['derniere']:%d/%m}"}])
     t_ind = {"titre": "Par indexeur", "entetes": entetes, "lignes": lignes,
              "total": ["Équipe", n(c["validations"]), "", duree(c["temps_med"]), duree(c["temps_p90"]), n(c["cadence"]),
-                       "—" if c["corrections_moy"] is None else f"{c['corrections_moy']:.1f}".replace(".", ","), ""],
-             "note": "Temps : écart entre deux validations consécutives du même indexeur (enchaînement des pièces), "
-                     f"entre {cfg['mesure']['temps_min_s']} s et {cfg['mesure']['session_max_min']} min. "
-                     "Pièces/h : validations rapportées aux heures d'indexation."}
+                       n(c["validees"]), ""],
+             "note": "Indexée = métadonnées enregistrées par l'indexeur. Temps : écart entre deux pièces indexées "
+                     f"successivement par la même personne, entre {cfg['mesure']['temps_min_s']} s et "
+                     f"{cfg['mesure']['session_max_min']} min. Pièces/h : pièces indexées rapportées aux heures d'indexation. "
+                     "Validées : contrôle de l'archiviste dans le panneau Scan."}
     if not lignes:
         t_ind["note"] = "Aucune validation sur la période."
 
@@ -143,10 +145,10 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
 
     # Qualité
     ch = c["champs"].head(6)
-    t_champs = {"titre": "Champs corrigés par les indexeurs", "entetes": [{"l": "Champ"}, {"l": "Pièces", "d": 1}, {"l": "Part des pièces indexées", "d": 1}],
-                "lignes": [[{"v": LIBELLES_CHAMPS.get(k, k.replace("mulcv:", ""))}, {"v": n(v)}, {"v": pct(v / c["indexees"]) if c["indexees"] else "—"}]
+    t_champs = {"titre": "Champs corrigés par les indexeurs", "entetes": [{"l": "Champ"}, {"l": "Pièces", "d": 1}, {"l": "Part des pièces validées", "d": 1}],
+                "lignes": [[{"v": LIBELLES_CHAMPS.get(k, k.replace("mulcv:", ""))}, {"v": n(v)}, {"v": pct(v / c["validees"]) if c["validees"] else "—"}]
                            for k, v in ch.items()],
-                "note": "Comparaison entre la proposition de l'analyse automatique et la valeur validée."}
+                "note": "Pièces validées : proposition de l'analyse automatique comparée à la valeur validée."}
     an = c["anomalies"].head(5)
     t_anom = {"titre": "Anomalies relevées par l'analyse", "entetes": [{"l": "Anomalie"}, {"l": "Pièces", "d": 1}],
               "lignes": [[{"v": LIBELLES_ANOMALIES.get(k, k)}, {"v": n(v)}] for k, v in an.items()],
@@ -161,8 +163,8 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
            "tuiles": [
                {"libelle": "Pièces indexées", "valeur": n(cu["indexees"]), "detail": f"sur {n(cu['pieces'])} pièces suivies",
                 "barre": round(cu["indexees"] / cu["pieces"] * 100) if cu["pieces"] else 0},
-               {"libelle": "Pièces versées", "valeur": n(cu["versees"]), "detail": pct(cu["versees"] / cu["pieces"]) + " des pièces" if cu["pieces"] else "—",
-                "barre": round(cu["versees"] / cu["pieces"] * 100) if cu["pieces"] else 0},
+               {"libelle": "Pièces validées", "valeur": n(cu["validees"]), "detail": f"dont {n(cu['versees'])} versées aux archives",
+                "barre": round(cu["validees"] / cu["pieces"] * 100) if cu["pieces"] else 0},
                {"libelle": "Dossiers entièrement indexés", "valeur": n(cu["dossiers_acheves"]), "detail": f"sur {n(cu['dossiers'])} dossiers",
                 "barre": round(cu["dossiers_acheves"] / cu["dossiers"] * 100) if cu["dossiers"] else 0},
                {"libelle": "Temps médian global", "valeur": duree(cu["temps_med"]), "detail": f"{n(cu['indexeurs'])} indexeurs au total"}]}
@@ -179,7 +181,7 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
         h = r.horaire
         images["g_activite"] = graphiques.horaire(h["heures"], h["aujourdhui"], h["reference"], h["coupure"],
                                                   "Moyenne des 10 derniers jours")
-        g1 = ("Indexations heure par heure", "Validations de la journée et moyenne des 10 derniers jours d'indexation")
+        g1 = ("Indexations heure par heure", "Pièces indexées dans la journée et moyenne des 10 derniers jours d'indexation")
     V = r.validations
     tv = V[(V["le"] >= r.debut) & (V["le"] < r.fin)]["temps_s"].dropna()
     if len(tv) >= 5:
@@ -203,12 +205,24 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
         "genere": f"{r.maintenant:%d/%m/%Y à %H:%M}", "prochain": prochain_envoi(r.maintenant, cal),
         "rectificatif": None, "pieces_jointes": None, "zone": zone,
         "session": cfg["mesure"]["session_max_min"],
+        "datation": datation(c),
     }
     sujet = (f"[Indexation SAE] {('Semaine du ' + f'{r.debut:%d/%m}') if hebdo else f'{r.maintenant:%d/%m}'} — "
              f"{n(c['indexees'])} pièces indexées, {duree(c['temps_med'])}/pièce, {n(st['a_indexer'])} en attente")
     if r.mode == "demo":
         sujet = "[DÉMO] " + sujet
     return ctx, images, sujet
+
+
+def datation(c) -> str:
+    s = c.get("sources") or {}
+    tot = sum(s.values())
+    if not tot:
+        return ""
+    lib = {"version": "historique des versions Alfresco", "derniere_modification": "dernière modification",
+           "validation": "validation (enregistrement non daté)"}
+    return "Datation des indexations de la période : " + ", ".join(
+        f"{v * 100 / tot:.0f} % {lib.get(k, k)}" for k, v in sorted(s.items(), key=lambda x: -x[1])) + "."
 
 
 def cal_jours_semaine(r: Rapport, cal) -> list:

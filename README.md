@@ -19,8 +19,9 @@ D'après `Ceibatech/MULCV-alfresco` (branche `Dev`, `services/scan` et `WORKFLOW
 dépôt du PDF par un poste      cm:created (service-account-mulcv-depot-posteN)
   → analyse automatique         ANALYSIS_COMPLETED   (OCR Tesseract, proposition de type, rubrique, champs)
   → À vérifier par l'archiviste  scan_job.status = REVIEW_REQUIRED
-  → indexation dans Share        l'indexeur corrige les 4 étapes du formulaire et enregistre
-  → validation                   METADATA_APPROVED    (acteur = indexeur ; contrôle droits, complétude, SHA-256)
+  → INDEXATION                   l'indexeur renseigne les 4 étapes du formulaire Share et clique « Enregistrer »
+                                 (version Alfresco / cm:modifier, cm:modified)
+  → validation                   METADATA_APPROVED    (archiviste ; contrôle droits, complétude, SHA-256)
   → versement aux archives       RECORD_FILED         (record déclaré et classé dans le plan RM V3)
 ```
 
@@ -38,6 +39,8 @@ dépôt du PDF par un poste      cm:created (service-account-mulcv-depot-posteN)
 Les définitions précises sont dans [docs/INDICATEURS.md](docs/INDICATEURS.md).
 
 ## Accès au SAE — lecture seule, sans compte API
+
+**Une pièce est indexée quand ses métadonnées sont enregistrées** par une personne ; la validation de l'archiviste et le versement sont suivis à part. L'enregistrement est daté par l'historique des versions Alfresco, à défaut par la dernière modification, à défaut par la validation (voir [docs/INDICATEURS.md](docs/INDICATEURS.md#datation-des-enregistrements)) ; le rapport indique la part de chaque datation.
 
 Le service tourne sur le serveur du SAE et lit deux sources par `docker` :
 

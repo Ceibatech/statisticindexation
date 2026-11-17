@@ -1,10 +1,13 @@
 """Indicateurs de l'indexation (voir docs/INDICATEURS.md pour les définitions).
 
 Grains :
-  pièce indexée     = pièce dont les métadonnées ont été validées (événement METADATA_APPROVED) ;
-                      comptée une fois, à sa PREMIÈRE validation. Une validation suivante est une reprise.
-  indexeur          = acteur de la validation (identifiant Alfresco ; nom lu dans le profil Alfresco)
-  temps d'indexation = écart entre deux validations consécutives d'un même indexeur, s'il est compris entre
+  pièce indexée     = pièce dont les métadonnées ont été ENREGISTRÉES par une personne (« Enregistrer » dans
+                      Share) ; comptée une fois, à son PREMIER enregistrement. Un enregistrement suivant est une reprise.
+                      Date et auteur : historique des versions Alfresco ; à défaut dernière modification ; à défaut
+                      validation (qui exige un enregistrement préalable).
+  pièce validée     = événement METADATA_APPROVED du service Scan (contrôle de l'archiviste)
+  indexeur          = auteur de l'enregistrement (identifiant Alfresco ; nom lu dans le profil Alfresco)
+  temps d'indexation = écart entre deux indexations consécutives d'un même indexeur, s'il est compris entre
                       mesure.temps_min_s et mesure.session_max_min (travail enchaîné). La première pièce d'une
                       session n'a pas de temps mesuré ; elle compte pour le temps médian de l'indexeur dans
                       les heures actives.
@@ -148,10 +151,24 @@ def preparer(pieces: list[dict], evenements: list[dict], personnes: dict, cfg: d
     P["valide_le"] = premier("METADATA_APPROVED")
     P["valide_par"] = premier("METADATA_APPROVED", col="acteur")
     P["validations"] = premier("METADATA_APPROVED", agg="count")
-    P["derniere_validation"] = premier("METADATA_APPROVED", agg="last")
     P["verse_le"] = premier("RECORD_FILED")
     P["verse_par"] = premier("RECORD_FILED", col="acteur")
-    for c in ("echecs_analyse", "relances", "validations"):
+
+    # Événements d'indexation : enregistrements par une personne, complétés par les validations
+    # sans enregistrement visible avant elles (la validation exige un enregistrement préalable).
+    S = E[(E["evenement"] == "METADATA_SAVED") & E["humain"]].copy()
+    S["source"] = S["details"].map(lambda d: _j(d).get("source", "version"))
+    A = E[(E["evenement"] == "METADATA_APPROVED") & E["humain"]]
+    prem_save = S.groupby("piece")["le"].min()
+    deja = pd.to_datetime(A["piece"].map(prem_save.to_dict()), errors="coerce")
+    a_sans = A[~(deja <= A["le"])]
+    a_sans = a_sans.sort_values(["le", "id"]).drop_duplicates("piece")
+    X = pd.concat([S, a_sans.assign(evenement="METADATA_SAVED", source="validation")], ignore_index=True)
+    X = X.sort_values(["le", "id"])
+    P["indexe_le"] = X.groupby("piece")["le"].first()
+    P["indexe_par"] = X.groupby("piece")["acteur"].first()
+    P["enregistrements"] = X.groupby("piece").size()
+    for c in ("echecs_analyse", "relances", "validations", "enregistrements"):
         P[c] = P[c].fillna(0).astype(int)
     # Une pièce dont l'analyse n'a laissé aucune trace d'événement (anciennes versions) : date de dépôt
     P["entree_stock"] = P["analyse_le"].fillna(P["depose_le"])
@@ -162,15 +179,21 @@ def preparer(pieces: list[dict], evenements: list[dict], personnes: dict, cfg: d
     P["nb_anomalies"] = P["anomalies"].fillna("[]").map(lambda x: len(json.loads(x)) if x else 0)
     P = P.reset_index()
 
-    # Temps d'indexation : écart avec la validation précédente du même indexeur, le même jour
-    V = E[(E["evenement"] == "METADATA_APPROVED") & E["humain"]].sort_values(["acteur", "le", "id"]).copy()
+    # Temps d'indexation : écart avec l'indexation précédente du même indexeur, le même jour.
+    # Plusieurs enregistrements successifs d'une même pièce par la même personne = une seule indexation,
+    # terminée à son DERNIER enregistrement (corrections comprises).
+    m = cfg["mesure"]
+    V = X.sort_values(["acteur", "le", "id"]).copy()
+    suivi = V["piece"].eq(V["piece"].shift(-1)) & V["acteur"].eq(V["acteur"].shift(-1)) \
+        & ((V["le"].shift(-1) - V["le"]) < pd.Timedelta(minutes=m["session_max_min"]))
+    V = V[~suivi].copy()
     V["jour"] = V["le"].dt.date
     V["ecart_s"] = V.groupby(["acteur", "jour"])["le"].diff().dt.total_seconds()
-    m = cfg["mesure"]
     V["mesure"] = V["ecart_s"].between(m["temps_min_s"], m["session_max_min"] * 60)
     V["temps_s"] = V["ecart_s"].where(V["mesure"])
     V["en_lot"] = V["ecart_s"] < m["temps_min_s"]
-    V["premiere"] = V.duplicated("piece", keep="first").map(lambda d: not d)
+    ordre = V.sort_values(["le", "id"])
+    V["premiere"] = ~ordre["piece"].duplicated(keep="first").reindex(V.index)
     V["nom"] = V["acteur"].map(lambda a: personnes.get(a) or a)
     return P, E, V
 
@@ -198,19 +221,23 @@ def heures_actives(v: pd.DataFrame) -> float:
 
 
 def periode(P, E, V, a: datetime, b: datetime) -> dict:
-    ind = P[_entre(P["valide_le"], a, b)]
+    ind = P[_entre(P["indexe_le"], a, b)]
+    val = P[_entre(P["valide_le"], a, b)]
     v = V[_entre(V["le"], a, b)]
     vers = P[_entre(P["verse_le"], a, b)]
     anal = P[_entre(P["analyse_le"], a, b)]
     h = heures_actives(v)
-    delai_dep = (ind["valide_le"] - ind["depose_le"]).dt.total_seconds() / 3600
-    delai_att = (ind["valide_le"] - ind["entree_stock"]).dt.total_seconds() / 3600
+    delai_dep = (ind["indexe_le"] - ind["depose_le"]).dt.total_seconds() / 3600
+    delai_att = (ind["indexe_le"] - ind["entree_stock"]).dt.total_seconds() / 3600
+    delai_val = (val["valide_le"] - val["indexe_le"]).dt.total_seconds() / 60
     delai_ver = (vers["verse_le"] - vers["valide_le"]).dt.total_seconds() / 60
-    champs = pd.Series([c for l in ind["champs_corriges"] for c in l], dtype=object).value_counts()
+    champs = pd.Series([c for l in val["champs_corriges"] for c in l], dtype=object).value_counts()
     anomalies = pd.Series([w for x in anal["anomalies"].fillna("[]") for w in json.loads(x)], dtype=object)
     anomalies = anomalies.map(lambda w: "Valeurs en conflit" if str(w).startswith("CONFLICT_") else w).value_counts()
     return {
         "indexees": int(len(ind)), "reprises": int((~v["premiere"]).sum()), "validations": int(len(v)),
+        "validees": int(len(val)), "delai_validation_min": _q(delai_val, .5),
+        "sources": v["source"].value_counts().to_dict(),
         "indexeurs": int(v["acteur"].nunique()), "versees": int(len(vers)),
         "deposees": int(_entre(P["depose_le"], a, b).sum()), "analysees": int(len(anal)),
         "echecs_analyse": int(((E["evenement"] == "ANALYSIS_FAILED") & _entre(E["le"], a, b)).sum()),
@@ -220,8 +247,8 @@ def periode(P, E, V, a: datetime, b: datetime) -> dict:
         "heures": h, "cadence": (len(v) / h) if h > 0 else None,
         "delai_depot_h": _q(delai_dep, .5), "delai_attente_h": _q(delai_att, .5), "delai_attente_p90_h": _q(delai_att, .9),
         "delai_versement_min": _q(delai_ver, .5),
-        "sans_correction": (float((~ind["corrigee"]).mean()) if len(ind) else None),
-        "corrections_moy": (float(ind["nb_corrections"].mean()) if len(ind) else None),
+        "sans_correction": (float((~val["corrigee"]).mean()) if len(val) else None),
+        "corrections_moy": (float(val["nb_corrections"].mean()) if len(val) else None),
         "champs": champs, "reconnaissance": (float(anal["reconnue"].dropna().mean()) if anal["reconnue"].notna().any() else None),
         "avec_anomalie": (float((anal["nb_anomalies"] > 0).mean()) if len(anal) else None), "anomalies": anomalies,
         "dossiers_acheves": dossiers_acheves(P, a, b),
@@ -230,7 +257,7 @@ def periode(P, E, V, a: datetime, b: datetime) -> dict:
 
 def dossiers_acheves(P, a, b) -> int:
     """Dossiers dont la dernière pièce a été indexée dans [a, b[ (toutes leurs pièces connues sont indexées)."""
-    g = P.dropna(subset=["dossier"]).groupby("dossier")["valide_le"].agg(["max", "count", "size"])
+    g = P.dropna(subset=["dossier"]).groupby("dossier")["indexe_le"].agg(["max", "count", "size"])
     g = g[g["count"] == g["size"]]
     return int(_entre(g["max"], a, b).sum())
 
@@ -238,31 +265,32 @@ def dossiers_acheves(P, a, b) -> int:
 def stock_a(P, t: datetime) -> pd.DataFrame:
     """Pièces en attente d'indexation à l'instant t (analysées ou déposées, non encore validées)."""
     entre = P["entree_stock"].notna() & (P["entree_stock"] < t)
-    pas_valide = P["valide_le"].isna() | (P["valide_le"] >= t)
-    return P[entre & pas_valide & (P["etat"] != "ERROR")]
+    pas_indexe = P["indexe_le"].isna() | (P["indexe_le"] >= t)
+    return P[entre & pas_indexe & (P["etat"] != "ERROR")]
 
 
 def par_indexeur(V, P, a, b, ref_jours: list[date], personnes: dict) -> pd.DataFrame:
     v = V[_entre(V["le"], a, b)]
     if v.empty:
         return pd.DataFrame()
-    ind = P[_entre(P["valide_le"], a, b)]
+    ind = P[_entre(P["indexe_le"], a, b)]
+    val = P[_entre(P["valide_le"], a, b)]
     g = v.groupby("acteur").agg(validations=("id", "size"), premiere=("le", "min"), derniere=("le", "max"),
                                 temps_med=("temps_s", "median"), mesures=("mesure", "sum"),
                                 dossiers=("piece", lambda s: P.set_index("id").reindex(s)["dossier"].nunique()))
     g["temps_p90"] = v.groupby("acteur")["temps_s"].quantile(.9)
-    g["indexees"] = ind.groupby("valide_par").size()
+    g["indexees"] = ind.groupby("indexe_par").size()
+    g["validees"] = val.groupby("valide_par").size()
     g["heures"] = v.groupby("acteur").apply(heures_actives, include_groups=False)
     g["cadence"] = g["validations"] / g["heures"].replace(0, np.nan)
-    g["corrections"] = ind.groupby("valide_par")["nb_corrections"].mean()
-    g["sans_correction"] = ind.groupby("valide_par")["corrigee"].apply(lambda s: float((~s).mean()))
+    g["corrections"] = val.groupby("valide_par")["nb_corrections"].mean()
+    g["sans_correction"] = val.groupby("valide_par")["corrigee"].apply(lambda s: float((~s).mean()))
     g["versees"] = P[_entre(P["verse_le"], a, b)].groupby("verse_par").size()
-    encours = P[(P["etat"] == "REVIEW_REQUIRED") & P["saisie_humaine"]].groupby("modifie_par").size()
-    g["en_cours"] = encours
+    g["en_cours"] = P[P["indexe_le"].notna() & P["valide_le"].isna()].groupby("indexe_par").size()
     if ref_jours:
         r = V[V["le"].dt.date.isin(ref_jours)]
         g["ref"] = r.groupby("acteur").size() / len(ref_jours)
-    g = g.fillna({"indexees": 0, "versees": 0, "en_cours": 0})
+    g = g.fillna({"indexees": 0, "validees": 0, "versees": 0, "en_cours": 0})
     g["nom"] = [personnes.get(x) or x for x in g.index]
     g["part"] = g["validations"] / g["validations"].sum()
     return g.sort_values("validations", ascending=False)
@@ -274,7 +302,8 @@ def flux_quotidien(P, V, jours: list[date]) -> pd.DataFrame:
         a, b = datetime.combine(j, time()), datetime.combine(j + timedelta(days=1), time())
         rows.append({"jour": j, "deposees": int(_entre(P["depose_le"], a, b).sum()),
                      "analysees": int(_entre(P["analyse_le"], a, b).sum()),
-                     "indexees": int(_entre(P["valide_le"], a, b).sum()),
+                     "indexees": int(_entre(P["indexe_le"], a, b).sum()),
+                     "validees": int(_entre(P["valide_le"], a, b).sum()),
                      "versees": int(_entre(P["verse_le"], a, b).sum()),
                      "indexeurs": int(V[_entre(V["le"], a, b)]["acteur"].nunique()),
                      "temps_med": _q(V[_entre(V["le"], a, b)]["temps_s"], .5),
@@ -332,7 +361,7 @@ class Rapport:
 
 def _moyenne(dicts: list[dict]) -> dict:
     out = {}
-    for k in ("indexees", "versees", "validations", "indexeurs", "deposees", "temps_med", "cadence", "sans_correction",
+    for k in ("indexees", "validees", "versees", "validations", "indexeurs", "deposees", "temps_med", "cadence", "sans_correction",
               "delai_attente_h", "heures"):
         vals = [d[k] for d in dicts if d.get(k) is not None]
         out[k] = float(np.mean(vals)) if vals else None
@@ -375,7 +404,7 @@ def construire(P, E, V, cfg, cal: Calendrier, maintenant: datetime, type_: str, 
     etats = P["etat"].fillna("NON_SUIVI").value_counts()
     # rythme : moyenne des 10 derniers jours ouvrés avec indexation
     rythme_jours = [d for d in cal.precedents(j + timedelta(days=1), 30) if d in set(V["le"].dt.date)][:10]
-    rythme = (float(np.mean([int((P["valide_le"].dt.date == d).sum()) for d in rythme_jours])) if rythme_jours else 0.0)
+    rythme = (float(np.mean([int((P["indexe_le"].dt.date == d).sum()) for d in rythme_jours])) if rythme_jours else 0.0)
     entree = (float(np.mean([int((P["entree_stock"].dt.date == d).sum()) for d in rythme_jours])) if rythme_jours else 0.0)
     plus_ancien = S["entree_stock"].min() if not S.empty else None
     stock = {"a_indexer": int(len(S)), "age": age, "plus_ancien": plus_ancien, "rythme": rythme, "entree": entree,
@@ -383,17 +412,18 @@ def construire(P, E, V, cfg, cal: Calendrier, maintenant: datetime, type_: str, 
              "date_resorption": (cal.apres(j, math.ceil(len(S) / (rythme - entree))) if rythme > entree and len(S) else None),
              "erreurs": int((P["etat"] == "ERROR").sum()), "a_verser": int(P["etat"].isin(["APPROVED", "FILE_ERROR"]).sum()),
              "a_verser_anciennes": int((P["etat"].isin(["APPROVED", "FILE_ERROR"]) & (P["valide_le"] < maintenant - timedelta(days=1))).sum()),
-             "saisies_en_cours": int(((P["etat"] == "REVIEW_REQUIRED") & P["saisie_humaine"]).sum()),
+             "saisies_en_cours": int((P["indexe_le"].notna() & P["valide_le"].isna()).sum()),
              "non_pris_en_charge": int((P["etat"] == "NON_SUIVI").sum())}
-    ind = P[_entre(P["valide_le"], a, b)]
+    ind = P[_entre(P["indexe_le"], a, b)]
     rub = (ind.assign(rubrique=ind["rubrique"].fillna("—"))
            .groupby("rubrique").agg(pieces=("id", "size"),
                                     chemin=("rubrique_chemin", lambda s: s.dropna().iloc[0] if s.notna().any() else ""))
            .sort_values("pieces", ascending=False))
     total = len(P)
-    cumul = {"pieces": total, "indexees": int(P["valide_le"].notna().sum()), "versees": int(P["verse_le"].notna().sum()),
+    cumul = {"pieces": total, "indexees": int(P["indexe_le"].notna().sum()), "validees": int(P["valide_le"].notna().sum()),
+             "versees": int(P["verse_le"].notna().sum()),
              "dossiers": int(P["dossier"].nunique()),
-             "dossiers_acheves": int((P.dropna(subset=["dossier"]).groupby("dossier")["valide_le"].count()
+             "dossiers_acheves": int((P.dropna(subset=["dossier"]).groupby("dossier")["indexe_le"].count()
                                       == P.dropna(subset=["dossier"]).groupby("dossier").size()).sum()),
              "indexeurs": int(V["acteur"].nunique()), "temps_med": _q(V["temps_s"], .5)}
     r = Rapport(type_, maintenant, a, b, libelle, cur, ref, ref_lib,
@@ -419,8 +449,17 @@ def constats(r: Rapport, cfg: dict) -> list[dict]:
         out.append(("attention", "Mode dégradé", "Le journal du service Scan n'a pas été lu : l'indexeur est le dernier "
                     "modificateur Alfresco et le temps d'indexation est approximatif."))
     if c["validations"] == 0 and not hebdo and r.maintenant.time() > time(10, 0):
-        out.append(("critique", "Aucune indexation validée aujourd'hui",
-                    f"Aucune validation depuis le début de la journée ; {st['a_indexer']} pièces attendent."))
+        out.append(("critique", "Aucune indexation aujourd'hui",
+                    f"Aucun enregistrement de métadonnées depuis le début de la journée ; {st['a_indexer']} pièces attendent."))
+    src = c.get("sources") or {}
+    approx = src.get("validation", 0) + src.get("derniere_modification", 0)
+    if c["validations"] and approx / c["validations"] > .5:
+        out.append(("info", "Datation des enregistrements",
+                    f"{approx * 100 / c['validations']:.0f} % des indexations sont datées par la validation ou la dernière "
+                    "modification, faute d'historique des versions : temps par pièce approximatif."))
+    if st["saisies_en_cours"]:
+        out.append(("info", "Indexées, pas encore validées",
+                    f"{st['saisies_en_cours']} pièces ont leurs métadonnées enregistrées mais pas encore validées par l'archiviste."))
     obj = o["pieces_indexees_par_jour"] * (5 if hebdo else 1)
     if c["indexees"] and ref.get("indexees") is not None and significatif(c["indexees"], ref["indexees"]):
         sens = "au-dessus" if c["indexees"] > ref["indexees"] else "en dessous"
@@ -454,14 +493,14 @@ def constats(r: Rapport, cfg: dict) -> list[dict]:
         for _, x in lents.iterrows():
             out.append(("info", f"{x['nom']} : temps élevé", f"Temps médian {_d(x['temps_med'])} contre {_d(t)} pour l'équipe "
                         "— pièces plus complexes ou besoin d'accompagnement."))
-    if c["sans_correction"] is not None and c["indexees"] >= 20:
+    if c["sans_correction"] is not None and c["validees"] >= 20:
         taux_corr = 1 - c["sans_correction"]
         top = ", ".join(LIBELLES_CHAMPS.get(k, k) for k in list(c["champs"].index[:3]))
         out.append(("attention" if taux_corr > o["seuil_correction"] else "info", "Qualité des propositions automatiques",
-                    f"{taux_corr * 100:.0f} % des pièces indexées ont été corrigées par l'indexeur"
+                    f"{taux_corr * 100:.0f} % des pièces validées ont été corrigées par l'indexeur"
                     + (f" ; champs les plus corrigés : {top}." if top else ".")))
     if c["en_lot"]:
-        out.append(("info", "Validations en lot", f"{c['en_lot']} validations à moins de {cfg['mesure']['temps_min_s']} s "
+        out.append(("info", "Indexations en lot", f"{c['en_lot']} indexations à moins de {cfg['mesure']['temps_min_s']} s "
                     "de la précédente : non retenues dans le temps d'indexation."))
     if st["erreurs"]:
         out.append(("attention", "Analyses en échec", f"{st['erreurs']} pièces en échec d'analyse : relancer depuis Share ou "

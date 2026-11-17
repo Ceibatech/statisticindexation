@@ -70,21 +70,22 @@ def classeur(r: Rapport, cfg: dict, ctx: dict) -> bytes:
     I = r.indexeurs
     if not I.empty:
         _feuille(wb, "Par indexeur",
-                 ["Indexeur", "Identifiant", "Validations", "Pièces indexées (1re validation)", "Part", "Temps médian (s)",
-                  "Temps 90 % (s)", "Temps mesurés", "Heures d'indexation", "Pièces / heure", "Champs corrigés / pièce",
-                  "Acceptées sans correction", "Versées", "Saisies non validées", "Première validation", "Dernière validation"],
+                 ["Indexeur", "Identifiant", "Pièces indexées", "dont 1er enregistrement", "Part", "Temps médian (s)",
+                  "Temps 90 % (s)", "Temps mesurés", "Heures d'indexation", "Pièces / heure", "Validées", "Champs corrigés / pièce",
+                  "Acceptées sans correction", "Versées", "Indexées non validées", "Première indexation", "Dernière indexation"],
                  [[x["nom"], a, _py(x["validations"]), _py(x["indexees"]), _py(x["part"]), _py(x["temps_med"]), _py(x["temps_p90"]),
-                   _py(x["mesures"]), _py(x["heures"]), _py(x["cadence"]), _py(x["corrections"]), _py(x["sans_correction"]),
-                   _py(x["versees"]), _py(x["en_cours"]), _py(x["premiere"]), _py(x["derniere"])] for a, x in I.iterrows()],
+                   _py(x["mesures"]), _py(x["heures"]), _py(x["cadence"]), _py(x["validees"]), _py(x["corrections"]),
+                   _py(x["sans_correction"]), _py(x["versees"]), _py(x["en_cours"]), _py(x["premiere"]), _py(x["derniere"])]
+                  for a, x in I.iterrows()],
                  {"Indexeur": 24, "Identifiant": 22},
                  {"Part": "0%", "Acceptées sans correction": "0%", "Temps médian (s)": "0", "Temps 90 % (s)": "0",
                   "Heures d'indexation": "0.0", "Pièces / heure": "0.0", "Champs corrigés / pièce": "0.00",
-                  "Première validation": "dd/mm/yyyy hh:mm", "Dernière validation": "dd/mm/yyyy hh:mm"})
+                  "Première indexation": "dd/mm/yyyy hh:mm", "Dernière indexation": "dd/mm/yyyy hh:mm"})
 
     F = r.flux
-    _feuille(wb, "Par jour", ["Jour", "Déposées", "Analysées", "Indexées", "Versées", "Indexeurs actifs",
+    _feuille(wb, "Par jour", ["Jour", "Déposées", "Analysées", "Indexées", "Validées", "Versées", "Indexeurs actifs",
                               "Temps médian (s)", "Stock à indexer le soir"],
-             [[x["jour"], x["deposees"], x["analysees"], x["indexees"], x["versees"], x["indexeurs"], _py(x["temps_med"]),
+             [[x["jour"], x["deposees"], x["analysees"], x["indexees"], x["validees"], x["versees"], x["indexeurs"], _py(x["temps_med"]),
                x["stock_soir"]] for _, x in F.iterrows()], formats={"Jour": "dd/mm/yyyy", "Temps médian (s)": "0"})
 
     M = r.matrice
@@ -94,35 +95,42 @@ def classeur(r: Rapport, cfg: dict, ctx: dict) -> bytes:
 
     P = r.pieces
     V = r.validations
-    temps = V.drop_duplicates("piece").set_index("piece")["temps_s"]
+    temps = V.sort_values("le").drop_duplicates("piece").set_index("piece")
     cols = ["Pièce (nodeId)", "Nom", "Zone", "Conteneur", "Carton", "Dossier", "État", "Déposée le", "Déposée par",
             "Analysée le", "Nature reconnue", "Anomalies", "Indexée le", "Indexée par", "Temps d'indexation (s)",
-            "Attente avant indexation (h)", "Validations", "Champs corrigés", "Type documentaire", "Rubrique", "Versée le",
+            "Datation", "Attente avant indexation (h)", "Enregistrements", "Validée le", "Validée par", "Champs corrigés",
+            "Type documentaire", "Rubrique", "Versée le",
             "Versée par", "Relances", "Échecs d'analyse", "Dernière modification", "Modifiée par"]
     lignes = []
     for _, x in P.sort_values("depose_le", na_position="last").iterrows():
-        att = (x["valide_le"] - x["entree_stock"]).total_seconds() / 3600 if pd.notna(x["valide_le"]) and pd.notna(x["entree_stock"]) else None
+        att = (x["indexe_le"] - x["entree_stock"]).total_seconds() / 3600 if pd.notna(x["indexe_le"]) and pd.notna(x["entree_stock"]) else None
+        t = temps.loc[x["id"]] if x["id"] in temps.index else None
         lignes.append([x["id"], x["nom"], x["zone"], x["conteneur"], x["carton"], x["dossier"],
                        LIBELLES_ETATS.get(x["etat"], x["etat"]), _py(x["depose_le"]), x["depose_par"], _py(x["analyse_le"]),
-                       x["nature_reconnue"], ", ".join(json.loads(x["anomalies"] or "[]")), _py(x["valide_le"]),
-                       r_nom(x["valide_par"], r), _py(temps.get(x["id"])), att, int(x["validations"]),
+                       x["nature_reconnue"], ", ".join(json.loads(x["anomalies"] or "[]")), _py(x["indexe_le"]),
+                       r_nom(x["indexe_par"], r), _py(t["temps_s"]) if t is not None else None,
+                       t["source"] if t is not None else None, att, int(x["enregistrements"]), _py(x["valide_le"]),
+                       r_nom(x["valide_par"], r),
                        ", ".join(LIBELLES_CHAMPS.get(c, c) for c in x["champs_corriges"]), x["type_document"], x["rubrique"],
                        _py(x["verse_le"]), r_nom(x["verse_par"], r), int(x["relances"]), int(x["echecs_analyse"]),
                        _py(x["modifie_le"]), r_nom(x["modifie_par"], r)])
     dt = "dd/mm/yyyy hh:mm"
     _feuille(wb, "Pièces", cols, lignes, {"Pièce (nodeId)": 38, "Nom": 36, "Champs corrigés": 30},
-             {"Déposée le": dt, "Analysée le": dt, "Indexée le": dt, "Versée le": dt, "Dernière modification": dt,
+             {"Déposée le": dt, "Analysée le": dt, "Indexée le": dt, "Validée le": dt, "Versée le": dt, "Dernière modification": dt,
               "Temps d'indexation (s)": "0", "Attente avant indexation (h)": "0.0"})
 
     _feuille(wb, "Méthode", ["Indicateur", "Définition"], [
-        ["Pièce indexée", "Pièce dont les métadonnées ont été validées (METADATA_APPROVED, journal du service Scan) ; comptée à sa 1re validation."],
-        ["Indexeur", "Utilisateur Alfresco auteur de la validation ; les comptes techniques sont exclus."],
-        ["Temps d'indexation", f"Écart entre deux validations successives du même indexeur le même jour, entre {cfg['mesure']['temps_min_s']} s et "
+        ["Pièce indexée", "Pièce dont les métadonnées ont été enregistrées par une personne (« Enregistrer » dans Share) ; comptée à son 1er enregistrement."],
+        ["Datation", "version = historique des versions Alfresco (exact) ; derniere_modification = dernière modification de la pièce ; "
+                     "validation = enregistrement non daté, compté à la validation qui l'exige."],
+        ["Pièce validée", "Contrôle de l'archiviste (METADATA_APPROVED, journal du service Scan)."],
+        ["Indexeur", "Utilisateur Alfresco auteur de l'enregistrement ; les comptes techniques sont exclus."],
+        ["Temps d'indexation", f"Écart entre deux pièces indexées successivement par la même personne le même jour, entre {cfg['mesure']['temps_min_s']} s et "
                                f"{cfg['mesure']['session_max_min']} min. La 1re pièce d'une session n'est pas mesurée."],
         ["Heures d'indexation", "Somme des temps mesurés + temps médian pour chaque pièce non mesurée."],
         ["Attente avant indexation", "De la fin de l'analyse automatique (à défaut, du dépôt) à la validation."],
-        ["Champs corrigés", "Champs mulcv:* dont la valeur validée diffère de la proposition de l'analyse automatique."],
-        ["Stock à indexer", "Pièces analysées non encore validées (hors analyses en échec)."],
+        ["Champs corrigés", "Pièces validées : champs mulcv:* dont la valeur validée diffère de la proposition de l'analyse automatique."],
+        ["Stock à indexer", "Pièces analysées dont les métadonnées n'ont pas encore été enregistrées (hors analyses en échec)."],
         ["Versement", "Record déclaré et classé dans le plan RM (RECORD_FILED)."],
         ["Écart significatif", "a + b ≥ 20 et |a − b| / √(a + b) ≥ 2."],
     ], {"Indicateur": 26, "Définition": 120})

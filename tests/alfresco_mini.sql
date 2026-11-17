@@ -42,3 +42,12 @@ INSERT INTO alf_node_properties(node_id,qname_id,string_value) VALUES
  (11,14,'FON-3302-113-0001-012-P02.pdf'),(11,22,'REVIEW_REQUIRED'),
  (13,14,'verse.pdf'),(13,22,'VERIFIED'),
  (14,15,'awa'),(14,16,'Awa'),(14,17,'DIALLO'),(15,15,'old');
+-- Historique des versions (version2Store) : deux enregistrements par awa de la pièce 1
+INSERT INTO alf_store VALUES (3,0,'workspace','version2Store',98);
+INSERT INTO alf_qname VALUES (30,0,2,'frozenNodeRef'),(31,0,2,'versionLabel');
+INSERT INTO alf_node(id,store_id,uuid,type_qname_id,audit_creator,audit_created,audit_modifier,audit_modified) VALUES
+ (20,3,'v1',11,'awa','2026-11-17T08:58:00.000Z','awa','2026-11-17T08:58:00.000Z'),
+ (21,3,'v2',11,'awa','2026-11-17T09:00:00.000Z','awa','2026-11-17T09:00:00.000Z');
+INSERT INTO alf_node_properties(node_id,qname_id,string_value) VALUES
+ (20,30,'workspace://SpacesStore/aaaaaaaa-0000-0000-0000-000000000001'),(20,31,'1.1'),
+ (21,30,'workspace://SpacesStore/aaaaaaaa-0000-0000-0000-000000000001'),(21,31,'1.2');

@@ -5,16 +5,27 @@
 | Grain | Définition | Source |
 |---|---|---|
 | Pièce | Document (`cm:content` ou type `mulcv:*` autre que `mulcv:dossier`) sous le dossier Scan, ou suivi par le service Scan | Alfresco, `scan_job` |
-| Pièce indexée | Pièce dont les métadonnées ont été **validées** par une personne (`METADATA_APPROVED`). Comptée une fois, à sa **première** validation | `scan_audit` |
-| Reprise | Validation d'une pièce déjà indexée (après relance d'analyse ou correction) | `scan_audit` |
-| Indexeur | Utilisateur Alfresco auteur de la validation. Nom lu dans son profil (`cm:firstName`, `cm:lastName`). Les comptes techniques (`perimetre.comptes_techniques`) sont exclus | `scan_audit`, Alfresco |
+| Pièce indexée | Pièce dont les métadonnées ont été **enregistrées** par une personne (bouton « Enregistrer » du formulaire Share). Comptée une fois, à son **premier** enregistrement | voir « Datation » |
+| Reprise | Nouvel enregistrement d'une pièce déjà indexée, par une autre personne ou dans une autre session | |
+| Pièce validée | Contrôle de l'archiviste dans le panneau Scan (`METADATA_APPROVED`) — suivi à part | `scan_audit` |
+| Indexeur | Utilisateur Alfresco auteur de l'enregistrement. Nom lu dans son profil (`cm:firstName`, `cm:lastName`). Les comptes techniques (`perimetre.comptes_techniques`) sont exclus | Alfresco |
 | Pièce versée | Record déclaré et classé dans le plan RM (`RECORD_FILED`) | `scan_audit` |
-| Stock à indexer | Pièce analysée (ou déposée) et pas encore validée, hors analyse en échec | reconstitué à toute date depuis les événements |
+| Stock à indexer | Pièce analysée (ou déposée) dont les métadonnées n'ont pas encore été enregistrées, hors analyse en échec | reconstitué à toute date |
 | Dossier entièrement indexé | Dossier dont toutes les pièces connues sont indexées ; daté par sa dernière pièce | |
+
+## Datation des enregistrements
+
+L'enregistrement des métadonnées est l'enregistrement natif de Share : le service Scan ne le journalise pas. Chaque indexation est datée, dans cet ordre de préférence :
+
+1. **Historique des versions Alfresco** (`version2Store`) : chaque version garde l'auteur et la date de la modification. Exact lorsque l'enregistrement des propriétés crée une version (`autoVersionOnUpdateProps`).
+2. **Dernière modification** de la pièce (`cm:modifier`, `cm:modified`) lorsqu'elle n'est pas encore validée : exacte pour le dernier enregistrement.
+3. **Validation** : une pièce validée sans enregistrement daté est comptée à sa validation, au nom du validateur (la validation exige un enregistrement préalable).
+
+Le rapport indique la part de chaque datation ; au-delà de 50 % de 2 et 3, il signale que les temps sont approximatifs.
 
 ## Temps
 
-**Temps d'indexation d'une pièce.** Le formulaire Share enchaîne les pièces (« la pièce suivante à indexer s'ouvre au bout de 5 s »). Le temps d'une pièce est donc l'écart entre sa validation et la validation précédente **du même indexeur, le même jour**, lorsqu'il est compris entre `mesure.temps_min_s` (5 s) et `mesure.session_max_min` (20 min). Il inclut la lecture du PDF, la saisie, l'enregistrement, la validation et, le cas échéant, le versement.
+**Temps d'indexation d'une pièce.** Le formulaire Share enchaîne les pièces (« la pièce suivante à indexer s'ouvre au bout de 5 s »). Le temps d'une pièce est donc l'écart entre son dernier enregistrement et celui de la pièce indexée juste avant **par la même personne, le même jour**, lorsqu'il est compris entre `mesure.temps_min_s` (5 s) et `mesure.session_max_min` (20 min). Plusieurs enregistrements successifs d'une même pièce (corrections) forment une seule indexation.
 
 - Écart supérieur à 20 min : début d'une nouvelle session (pause, réunion) ; la première pièce d'une session n'a pas de temps mesuré.
 - Écart inférieur à 5 s : validation en lot, non retenue (signalée dans le rapport).
@@ -22,15 +33,15 @@
 
 **Heures d'indexation** d'un indexeur : somme de ses temps mesurés + son temps médian pour chaque pièce non mesurée. **Cadence** = validations / heures d'indexation.
 
-**Attente avant indexation** : de la fin de l'analyse automatique (à défaut, du dépôt) à la première validation. **Délai de versement** : de la première validation au versement.
+**Attente avant indexation** : de la fin de l'analyse automatique (à défaut, du dépôt) au premier enregistrement. **Délai de validation** : du premier enregistrement à la validation. **Délai de versement** : de la validation au versement.
 
 ## Qualité
 
-- **Champs corrigés** : champs `mulcv:*` dont la valeur validée (`scan_job.approved_snapshot`) diffère de la proposition de l'analyse (`scan_job.applied`). Les propriétés posées par le serveur (`sha256`, statuts, `classCode`, `classPath`, `planVersion`…) ne comptent pas.
+- **Champs corrigés** (pièces validées) : champs `mulcv:*` dont la valeur validée (`scan_job.approved_snapshot`) diffère de la proposition de l'analyse (`scan_job.applied`). Les propriétés posées par le serveur (`sha256`, statuts, `classCode`, `classPath`, `planVersion`…) ne comptent pas.
 - **Acceptées sans correction** : part des pièces indexées sans aucun champ corrigé — mesure directe de l'utilité de l'analyse automatique.
 - **Reconnaissance automatique** : part des analyses dont la nature proposée n'est pas « inconnu ».
 - **Anomalies** : avertissements de l'analyse (`SURFACE_CONFLICT`, `DESTINATION_REQUIRES_REVIEW`, `MUNICIPALITY_DIFFERS_FROM_COTE`, `CONFLICT_<champ>`, `DOSSIER_ID_CONFLICT`).
-- **Saisies non validées** : pièces encore « à vérifier » dont la dernière modification Alfresco est celle d'une personne (enregistrées, pas encore validées).
+- **Indexées non validées** : pièces dont les métadonnées sont enregistrées mais pas encore validées par l'archiviste.
 
 ## Comparaisons
 
@@ -41,6 +52,6 @@
 
 ## Limites
 
-- Le service Scan ne journalise pas l'ouverture d'une pièce ni les enregistrements intermédiaires : le temps est mesuré entre validations successives. Une pièce enregistrée un jour et validée le lendemain n'a pas de temps mesuré.
+- Le service Scan ne journalise ni l'ouverture d'une pièce ni son enregistrement : sans historique des versions, seul le dernier enregistrement d'une pièce non validée est daté exactement.
 - Les documents indexés hors du parcours Scan (formulaires du portail, autres sites) ne sont pas suivis par ce rapport.
 - Le nombre de pages n'est pas enregistré dans le SAE ; il n'est pas utilisé ici.
