@@ -74,10 +74,11 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
     tuiles = [
         {"libelle": "Pièces indexées", "valeur": n(c["indexees"]), "taux": taux,
          "barre": max(2, min(100, round((taux or 0) * 100))), "taux_txt": f"{pct(taux)} de l'objectif ({n(objectif)})",
-         "comp": ecart(c["indexees"], ref.get("indexees"), lib_ref)},
+         "comp": " · ".join(x for x in [ecart(c["indexees"], ref.get("indexees"), lib_ref),
+                                        f"dont {n(c['par_agent'])} par l'agent IA" if c.get("par_agent") else None] if x) or None},
         {"libelle": "Temps médian par pièce", "valeur": duree(c["temps_med"]), "taux": None,
          "comp": f"90 % en moins de {duree(c['temps_p90'])} · cible {duree(obj['temps_cible_s'])}"},
-        {"libelle": "Indexeurs actifs", "valeur": n(c["indexeurs"]), "taux": None,
+        {"libelle": "Indexeurs actifs", "valeur": n(c["indexeurs"]) + (" + IA" if c.get("agent_indexations") else ""), "taux": None,
          "comp": f"{heures(c['heures'])} d'indexation · {n(c['cadence'])} pièces/h"},
         {"libelle": "Stock à indexer", "valeur": n(st["a_indexer"]), "taux": None,
          "comp": (f"plus ancienne : {st['plus_ancien']:%d/%m %H:%M}" if st["plus_ancien"] is not None else "file vide")},
@@ -112,7 +113,10 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
                 sous.append(f"moy. {n(x['ref'])}/j")
             if x.get("en_cours"):
                 sous.append(f"{n(x['en_cours'])} non validée(s)")
-            lignes.append([{"v": x["nom"], "g": 1, "s": acteur if acteur != x["nom"] else None},
+            ident = acteur if acteur != x["nom"] else None
+            if x.get("agent") is True:
+                ident = "agent IA · temps de traitement réel" + (f" · {acteur}" if ident else "")
+            lignes.append([{"v": x["nom"], "g": 1, "s": ident},
                            {"v": n(x["validations"]), "g": 1, "s": " · ".join(sous) or None},
                            {"barre": max(2, round(x["validations"] / mx * 70))},
                            {"v": duree(x["temps_med"]), "s": f"{n(x['mesures'])} mesurés"},
@@ -220,6 +224,7 @@ def datation(c) -> str:
     if not tot:
         return ""
     lib = {"version": "historique des versions Alfresco", "derniere_modification": "dernière modification",
+           "journal_agent": "journal de l'agent IA",
            "validation": "validation (enregistrement non daté)"}
     return "Datation des indexations de la période : " + ", ".join(
         f"{v * 100 / tot:.0f} % {lib.get(k, k)}" for k, v in sorted(s.items(), key=lambda x: -x[1])) + "."

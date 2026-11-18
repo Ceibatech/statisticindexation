@@ -107,6 +107,10 @@ EXPORT_SQL = """CALL CSVWRITE('/w/job.csv', 'SELECT node_id, status, attempts, u
 CALL CSVWRITE('/w/audit.csv', 'SELECT id, node_id, event, actor, at_time, details FROM scan_audit ORDER BY id',
   'charset=UTF-8 fieldSeparator=;');
 """
+# Table de l'agent d'indexation IA (absente sur les versions du service Scan sans agent : lecture facultative)
+EXPORT_AGENT_SQL = """CALL CSVWRITE('/w/agent.csv', 'SELECT node_id, outcome, attempts, fields, ocr_ms, model_ms, total_ms, model,
+  indexed_at, error FROM agent_indexing', 'charset=UTF-8 fieldSeparator=;');
+"""
 
 
 class JournalScan:
@@ -125,7 +129,7 @@ class JournalScan:
         raise RuntimeError("Conteneur du service Scan (image mulcv-scan) introuvable sur ce serveur ; "
                            "le préciser dans config.yaml : source.journal_scan.conteneur")
 
-    def lire(self) -> tuple[list[dict], list[dict]]:
+    def lire(self) -> tuple[list[dict], list[dict], list[dict]]:
         ctn = self._conteneur()
         image = _docker("inspect", "-f", "{{.Config.Image}}", ctn).decode().strip()
         env = dict(l.split("=", 1) for l in _docker("inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", ctn)
@@ -144,13 +148,23 @@ class JournalScan:
                 (w / "h2.jar").write_bytes(z.read(h2[0]))
             (w / "app.jar").unlink()
             (w / "export.sql").write_text(EXPORT_SQL, encoding="utf-8")
+            (w / "agent.sql").write_text(EXPORT_AGENT_SQL, encoding="utf-8")
             for f in w.iterdir():
                 f.chmod(0o666)
-            _docker("run", "--rm", "--network", "none", "--read-only", "--tmpfs", "/tmp", "-v", f"{w}:/w",
-                    "-e", f"H2PW={mdp}", "--entrypoint", "sh", image, "-c",
-                    'exec java -cp /w/h2.jar org.h2.tools.RunScript -url "jdbc:h2:file:/w/scan" '
-                    '-user sa -password "$H2PW" -script /w/export.sql', timeout=300)
-            return lire_csv(w / "job.csv"), lire_csv(w / "audit.csv")
+
+            def executer(script):
+                _docker("run", "--rm", "--network", "none", "--read-only", "--tmpfs", "/tmp", "-v", f"{w}:/w",
+                        "-e", f"H2PW={mdp}", "--entrypoint", "sh", image, "-c",
+                        'exec java -cp /w/h2.jar org.h2.tools.RunScript -url "jdbc:h2:file:/w/scan" '
+                        f'-user sa -password "$H2PW" -script /w/{script}', timeout=300)
+            executer("export.sql")
+            try:
+                executer("agent.sql")
+                agent = lire_csv(w / "agent.csv")
+            except RuntimeError as e:
+                log.info("Table agent_indexing absente ou illisible (%s) : agent IA suivi par le journal seul", str(e)[:120])
+                agent = []
+            return lire_csv(w / "job.csv"), lire_csv(w / "audit.csv"), agent
 
 
 def lire_csv(chemin: Path) -> list[dict]:
@@ -295,8 +309,10 @@ class AlfrescoSql:
 class Collecte:
     """Résultat brut normalisé : pièces, événements, noms des utilisateurs."""
 
-    def __init__(self, pieces: list[dict], evenements: list[dict], personnes: dict[str, str], mode: str):
+    def __init__(self, pieces: list[dict], evenements: list[dict], personnes: dict[str, str], mode: str,
+                 agent: list[dict] | None = None):
         self.pieces, self.evenements, self.personnes, self.mode = pieces, evenements, personnes, mode
+        self.agent = agent or []   # lignes agent_indexing : node_id, outcome, total_ms…
 
 
 def assembler(noeuds: list[dict], jobs: list[dict], audit: list[dict], tz: ZoneInfo, chemin_scan: list[str],
@@ -397,20 +413,23 @@ def collecter(cfg: dict, tz: ZoneInfo, maintenant: datetime | None = None) -> Co
     racine = per.get("racine_scan_uuid") or alf.racine(per["site"], per["dossier_scan"])
     js = s.get("journal_scan") or {}
     if js.get("actif", True):
-        jobs, audit = JournalScan(js).lire()
+        jobs, audit, agent = JournalScan(js).lire()
         noeuds = alf.noeuds(racine, [j["node_id"] for j in jobs])
         pieces, evts = assembler(noeuds, jobs, audit, tz, [], per.get("racine_production", "Production"))
         mode = "journal"
         evts += evenements_enregistrement(pieces, alf.versions([p["id"] for p in pieces]), tz, len(evts) + 10_000_000,
                                           _technique(cfg))
     else:
+        agent = []
         noeuds = alf.noeuds(racine, [])
         pieces, _ = assembler(noeuds, [], [], tz, [], per.get("racine_production", "Production"))
         evts = evenements_degrades(noeuds, tz)
         evts += evenements_enregistrement(pieces, alf.versions([p["id"] for p in pieces]), tz, len(evts) + 10_000_000,
                                           _technique(cfg))
         mode = "degrade"
-    return Collecte(pieces, evts, alf.personnes(), mode)
+    personnes = alf.personnes()
+    personnes.update({k: v for k, v in (cfg["perimetre"].get("agents_ia") or {}).items()})
+    return Collecte(pieces, evts, personnes, mode, agent)
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +451,7 @@ class Demo:
         self.tz = tz
         self.maintenant = maintenant or datetime.now(tz).replace(tzinfo=None)
         self.debut = self.maintenant.date() - timedelta(days=24)
+        self.agent = []
 
     def collecte(self) -> Collecte:
         rng = random.Random(2026)
@@ -494,6 +514,11 @@ class Demo:
                         if t >= fin or t > self.maintenant:
                             break
                         instants.append((t, u))
+                # agent IA : traite des pièces la nuit et en continu, ~40 s par pièce
+                ta = datetime(j.year, j.month, j.day, 7, 0)
+                for _ in range(rng.randint(60, 120)):
+                    ta += timedelta(seconds=rng.randint(30, 70))
+                    instants.append((ta, "service-account-ceiba-ai-agent"))
                 for t, u in sorted(instants):
                     dispo = [x for x in file if x["_analyse"] < t]
                     if not dispo:
@@ -508,6 +533,13 @@ class Demo:
                         eid += 1
                         evts.append({"id": eid, "piece": p["id"], "evenement": "ANALYSIS_REQUESTED", "acteur": u,
                                      "le": t - timedelta(seconds=20), "details": "{}"})
+                    if u.startswith("service-account-"):
+                        eid += 1
+                        evts.append({"id": eid, "piece": p["id"], "evenement": "AGENT_INDEXED", "acteur": u, "le": t,
+                                     "details": "{}"})
+                        p.update(modifie_par=u, modifie_le=t)
+                        self.agent.append({"node_id": p["id"], "outcome": "FILLED", "total_ms": str(rng.randint(25000, 60000))})
+                        continue
                     eid += 1
                     evts.append({"id": eid, "piece": p["id"], "evenement": "METADATA_SAVED", "acteur": u,
                                  "le": t - timedelta(seconds=rng.randint(4, 12)), "details": json.dumps({"source": "version"})})
@@ -539,5 +571,6 @@ class Demo:
             p.pop("_rub", None)
             p.pop("_analyse", None)
         noms = {"akoua.yao": "Akoua YAO", "kone.ibrahim": "Ibrahim KONÉ", "nguessan.marie": "Marie N'GUESSAN",
-                "traore.salif": "Salif TRAORÉ", "diallo.awa": "Awa DIALLO"}
-        return Collecte(pieces, evts, noms, "demo")
+                "traore.salif": "Salif TRAORÉ", "diallo.awa": "Awa DIALLO",
+                "service-account-ceiba-ai-agent": "Agent IA CEIBA"}
+        return Collecte(pieces, evts, noms, "demo", self.agent)

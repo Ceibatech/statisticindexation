@@ -17,7 +17,9 @@ perimetre:
   racine_scan_uuid: "20bb0608-427e-40e7-bb06-08427eb0e773"   # vide = recherche par nom
   racine_production: "Production"
   exclure_conteneurs: "^(?:ESSAI|TEST)"   # expression régulière : conteneurs de test exclus des chiffres
-  comptes_techniques: "^(?:service-account-|worker$|admin$|System$)"   # jamais comptés comme indexeurs
+  comptes_techniques: "^(?:service-account-(?!ceiba-ai-agent$)|worker$|admin$|System$)"   # jamais comptés comme indexeurs
+  agents_ia:                        # comptes d'agents qui indexent comme une personne (comptés comme indexeurs)
+    service-account-ceiba-ai-agent: "Agent IA CEIBA"
 
 objectifs:                          # à ajuster par la direction de projet
   pieces_indexees_par_jour: 600     # pièces validées (toutes personnes confondues)

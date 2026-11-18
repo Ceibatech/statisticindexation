@@ -183,3 +183,22 @@ def test_requetes_alfresco_sur_schema_reduit():
     assert {e["piece"] for e in evts} == {"aaaaaaaa-0000-0000-0000-000000000001", "bbbbbbbb-0000-0000-0000-000000000003"}
     x = next(p for p in pieces if p["id"].endswith("01"))
     assert (x["zone"], x["conteneur"], x["carton"]) == ("Zone_Sud", "CNT-0001", "BOX 2")
+
+
+def test_agent_ia_compte_comme_indexeur():
+    """service-account-ceiba-ai-agent indexe (AGENT_INDEXED) : compté, temps réel de l'agent, hors médiane de l'équipe."""
+    agent = "service-account-ceiba-ai-agent"
+    pieces = [piece(f"p{i}") for i in range(5)]
+    evts = [evt(1, "p0", "AGENT_INDEXED", agent, 7, 0), evt(2, "p1", "AGENT_INDEXED", agent, 7, 1),
+            evt(3, "p1", "METADATA_SAVED", agent, 7, 1, 1),                    # sa version Alfresco : même indexation
+            evt(4, "p2", "METADATA_SAVED", "awa", 9, 0), evt(5, "p3", "METADATA_SAVED", "awa", 9, 2),
+            evt(6, "p4", "METADATA_SAVED", "service-account-mulcv-scan-worker", 9, 3)]   # analyse : exclue
+    lignes_agent = [{"node_id": "p0", "outcome": "FILLED", "total_ms": "41000"},
+                    {"node_id": "p1", "outcome": "FILLED", "total_ms": "39000"}]
+    P, E, V = I.preparer(pieces, evts, {}, CFG, lignes_agent)
+    assert set(V["acteur"]) == {agent, "awa"}
+    assert sorted(V[V["agent"]]["temps_s"].tolist()) == [39.0, 41.0]
+    c = I.periode(P, E, V, datetime(2026, 11, 17), datetime(2026, 11, 18))
+    assert c["indexees"] == 4 and c["par_agent"] == 2 and c["agent_indexations"] == 2
+    assert c["indexeurs"] == 1 and c["temps_med"] == 120.0 and c["agent_temps_med"] == 40.0
+    assert P.set_index("id").loc["p0", "indexe_par"] == agent

@@ -120,7 +120,7 @@ def corrections(proposition: str, validation: str) -> list[str]:
 # ---------------------------------------------------------------------------
 #  Préparation : une ligne par pièce, une ligne par événement
 # ---------------------------------------------------------------------------
-def preparer(pieces: list[dict], evenements: list[dict], personnes: dict, cfg: dict):
+def preparer(pieces: list[dict], evenements: list[dict], personnes: dict, cfg: dict, agent: list[dict] | None = None):
     P = pd.DataFrame(pieces)
     E = pd.DataFrame(evenements, columns=["id", "piece", "evenement", "acteur", "le", "details"])
     for c in ("depose_le", "modifie_le"):
@@ -156,8 +156,10 @@ def preparer(pieces: list[dict], evenements: list[dict], personnes: dict, cfg: d
 
     # Événements d'indexation : enregistrements par une personne, complétés par les validations
     # sans enregistrement visible avant elles (la validation exige un enregistrement préalable).
-    S = E[(E["evenement"] == "METADATA_SAVED") & E["humain"]].copy()
-    S["source"] = S["details"].map(lambda d: _j(d).get("source", "version"))
+    # AGENT_INDEXED : enregistrement de l'agent d'indexation IA, daté au journal du service Scan
+    S = E[E["evenement"].isin(["METADATA_SAVED", "AGENT_INDEXED"]) & E["humain"]].copy()
+    S["source"] = [("journal_agent" if ev == "AGENT_INDEXED" else _j(d).get("source", "version"))
+                   for ev, d in zip(S["evenement"], S["details"])]
     A = E[(E["evenement"] == "METADATA_APPROVED") & E["humain"]]
     prem_save = S.groupby("piece")["le"].min()
     deja = pd.to_datetime(A["piece"].map(prem_save.to_dict()), errors="coerce")
@@ -195,6 +197,22 @@ def preparer(pieces: list[dict], evenements: list[dict], personnes: dict, cfg: d
     ordre = V.sort_values(["le", "id"])
     V["premiere"] = ~ordre["piece"].duplicated(keep="first").reindex(V.index)
     V["nom"] = V["acteur"].map(lambda a: personnes.get(a) or a)
+    # Agent IA : temps de traitement réel de chaque pièce (OCR + modèle), noté par l'agent lui-même
+    agents = set((cfg["perimetre"].get("agents_ia") or {}).keys())
+    V["agent"] = V["acteur"].isin(agents)
+    duree = {}
+    for a in agent or []:
+        try:
+            if a.get("outcome") == "FILLED" and a.get("total_ms"):
+                duree[a["node_id"]] = float(a["total_ms"]) / 1000
+        except (TypeError, ValueError):
+            continue
+    if duree:
+        t = V["piece"].map(duree)
+        sel = V["agent"] & t.notna()
+        V.loc[sel, "temps_s"] = t[sel]
+        V.loc[sel, "mesure"] = True
+        V.loc[sel, "en_lot"] = False
     return P, E, V
 
 
@@ -224,9 +242,11 @@ def periode(P, E, V, a: datetime, b: datetime) -> dict:
     ind = P[_entre(P["indexe_le"], a, b)]
     val = P[_entre(P["valide_le"], a, b)]
     v = V[_entre(V["le"], a, b)]
+    va = v[v["agent"]]
+    vh = v[~v["agent"]]          # temps, heures et cadence : indexeurs humains
     vers = P[_entre(P["verse_le"], a, b)]
     anal = P[_entre(P["analyse_le"], a, b)]
-    h = heures_actives(v)
+    h = heures_actives(vh)
     delai_dep = (ind["indexe_le"] - ind["depose_le"]).dt.total_seconds() / 3600
     delai_att = (ind["indexe_le"] - ind["entree_stock"]).dt.total_seconds() / 3600
     delai_val = (val["valide_le"] - val["indexe_le"]).dt.total_seconds() / 60
@@ -238,13 +258,16 @@ def periode(P, E, V, a: datetime, b: datetime) -> dict:
         "indexees": int(len(ind)), "reprises": int((~v["premiere"]).sum()), "validations": int(len(v)),
         "validees": int(len(val)), "delai_validation_min": _q(delai_val, .5),
         "sources": v["source"].value_counts().to_dict(),
-        "indexeurs": int(v["acteur"].nunique()), "versees": int(len(vers)),
+        "indexeurs": int(vh["acteur"].nunique()), "versees": int(len(vers)),
+        "par_agent": int(ind["indexe_par"].isin(set(va["acteur"])).sum()) if len(va) else 0,
+        "agent_indexations": int(len(va)), "agent_temps_med": _q(va["temps_s"], .5),
         "deposees": int(_entre(P["depose_le"], a, b).sum()), "analysees": int(len(anal)),
         "echecs_analyse": int(((E["evenement"] == "ANALYSIS_FAILED") & _entre(E["le"], a, b)).sum()),
         "relances": int(((E["evenement"] == "ANALYSIS_REQUESTED") & E["humain"] & _entre(E["le"], a, b)).sum()),
-        "temps_med": _q(v["temps_s"], .5), "temps_p90": _q(v["temps_s"], .9), "temps_moy": (float(v["temps_s"].mean()) if v["temps_s"].notna().any() else None),
-        "temps_mesures": int(v["mesure"].sum()), "en_lot": int(v["en_lot"].sum()),
-        "heures": h, "cadence": (len(v) / h) if h > 0 else None,
+        "temps_med": _q(vh["temps_s"], .5), "temps_p90": _q(vh["temps_s"], .9),
+        "temps_moy": (float(vh["temps_s"].mean()) if vh["temps_s"].notna().any() else None),
+        "temps_mesures": int(vh["mesure"].sum()), "en_lot": int(vh["en_lot"].sum()),
+        "heures": h, "cadence": (len(vh) / h) if h > 0 else None,
         "delai_depot_h": _q(delai_dep, .5), "delai_attente_h": _q(delai_att, .5), "delai_attente_p90_h": _q(delai_att, .9),
         "delai_versement_min": _q(delai_ver, .5),
         "sans_correction": (float((~val["corrigee"]).mean()) if len(val) else None),
@@ -282,6 +305,7 @@ def par_indexeur(V, P, a, b, ref_jours: list[date], personnes: dict) -> pd.DataF
     g["indexees"] = ind.groupby("indexe_par").size()
     g["validees"] = val.groupby("valide_par").size()
     g["heures"] = v.groupby("acteur").apply(heures_actives, include_groups=False)
+    g["agent"] = v.groupby("acteur")["agent"].first()
     g["cadence"] = g["validations"] / g["heures"].replace(0, np.nan)
     g["corrections"] = val.groupby("valide_par")["nb_corrections"].mean()
     g["sans_correction"] = val.groupby("valide_par")["corrigee"].apply(lambda s: float((~s).mean()))
@@ -420,12 +444,14 @@ def construire(P, E, V, cfg, cal: Calendrier, maintenant: datetime, type_: str, 
                                     chemin=("rubrique_chemin", lambda s: s.dropna().iloc[0] if s.notna().any() else ""))
            .sort_values("pieces", ascending=False))
     total = len(P)
-    cumul = {"pieces": total, "indexees": int(P["indexe_le"].notna().sum()), "validees": int(P["valide_le"].notna().sum()),
+    cumul = {"par_agent": int(P["indexe_par"].isin(set(V.loc[V["agent"], "acteur"])).sum()), "pieces": total, "indexees": int(P["indexe_le"].notna().sum()), "validees": int(P["valide_le"].notna().sum()),
              "versees": int(P["verse_le"].notna().sum()),
              "dossiers": int(P["dossier"].nunique()),
              "dossiers_acheves": int((P.dropna(subset=["dossier"]).groupby("dossier")["indexe_le"].count()
                                       == P.dropna(subset=["dossier"]).groupby("dossier").size()).sum()),
              "indexeurs": int(V["acteur"].nunique()), "temps_med": _q(V["temps_s"], .5)}
+    cumul["indexeurs"] = int(V.loc[~V["agent"], "acteur"].nunique())
+    cumul["temps_med"] = _q(V.loc[~V["agent"], "temps_s"], .5)
     r = Rapport(type_, maintenant, a, b, libelle, cur, ref, ref_lib,
                 par_indexeur(V, P, a, b, ref_jours if type_ != "hebdo" else [], personnes),
                 flux, matrice, horaire, stock, etats, rub, cumul, mode=mode, pieces=P, validations=V,
@@ -487,9 +513,14 @@ def constats(r: Rapport, cfg: dict) -> list[dict]:
         lvl = "ok" if t <= o["temps_cible_s"] else "attention"
         out.append((lvl, "Temps d'indexation", f"Temps médian par pièce : {_d(t)} (90 % des pièces en moins de {_d(c['temps_p90'])}), "
                     f"pour une cible de {_d(o['temps_cible_s'])}. Mesuré sur {c['temps_mesures']} enchaînements."))
+    if c.get("agent_indexations"):
+        out.append(("info", "Agent IA d'indexation",
+                    f"L'agent IA a indexé {c['agent_indexations']} pièces ({c['par_agent']} en première indexation), "
+                    f"en {_d(c['agent_temps_med'])} médian par pièce. Ses pièces restent à vérifier et valider par un archiviste ; "
+                    "il est compté comme un indexeur mais exclu du temps médian de l'équipe."))
     I = r.indexeurs
     if not I.empty and t:
-        lents = I[(I["mesures"] >= 20) & (I["temps_med"] > 1.5 * t)]
+        lents = I[(I["mesures"] >= 20) & (I["temps_med"] > 1.5 * t) & ~I["agent"].fillna(False).astype(bool)]
         for _, x in lents.iterrows():
             out.append(("info", f"{x['nom']} : temps élevé", f"Temps médian {_d(x['temps_med'])} contre {_d(t)} pour l'équipe "
                         "— pièces plus complexes ou besoin d'accompagnement."))

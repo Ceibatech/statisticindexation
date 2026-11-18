@@ -156,7 +156,9 @@
     elle est comptée une fois, à son premier enregistrement, au nom de son auteur. La validation par l'archiviste (contrôle des
     droits, de la complétude et de l'empreinte SHA-256) est suivie à part. Le temps d'indexation est l'écart entre deux pièces
     indexées successivement par la même personne, entre 5 s et {{ session }} min ; la première pièce d'une session n'est pas
-    mesurée. Les comptes techniques (postes de scan, analyse automatique) ne sont jamais comptés comme indexeurs.
+    mesurée. L'agent IA d'indexation est compté comme un indexeur, avec son temps de traitement réel, mais exclu du temps
+    médian et de la cadence de l'équipe. Les autres comptes techniques (postes de scan, analyse automatique) ne sont jamais
+    comptés comme indexeurs.
     {{ datation }}<br>
     Source : {{ source }} · généré le {{ genere }} · prochain envoi : {{ prochain }}.<br>
     Répondre à ce message écrit à toute la liste de diffusion.

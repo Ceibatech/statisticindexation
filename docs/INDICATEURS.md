@@ -13,6 +13,15 @@
 | Stock à indexer | Pièce analysée (ou déposée) dont les métadonnées n'ont pas encore été enregistrées, hors analyse en échec | reconstitué à toute date |
 | Dossier entièrement indexé | Dossier dont toutes les pièces connues sont indexées ; daté par sa dernière pièce | |
 
+## Agent IA d'indexation
+
+L'agent `ceiba-ai-agent` (service Scan, branche `Dev` de MULCV-alfresco) enregistre les métadonnées sous le compte `service-account-ceiba-ai-agent`. Il est **compté comme un indexeur** (`perimetre.agents_ia`), avec ses propres lignes dans le rapport :
+
+- ses indexations viennent du journal du service Scan (`AGENT_INDEXED`), datées exactement ;
+- son temps par pièce est son temps de traitement réel (OCR + modèle, `agent_indexing.total_ms`) ;
+- il est exclu du temps médian, des heures et de la cadence de l'équipe, pour ne pas fausser la mesure du travail humain ;
+- une pièce qu'il a remplie puis qu'une personne reprend compte comme indexée par l'agent ; le travail de la personne est une reprise, comptée dans son activité et son temps.
+
 ## Datation des enregistrements
 
 L'enregistrement des métadonnées est l'enregistrement natif de Share : le service Scan ne le journalise pas. Chaque indexation est datée, dans cet ordre de préférence :

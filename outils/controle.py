@@ -28,7 +28,7 @@ debut = date.fromisoformat(args[0]) if args else datetime.now(tz).date()
 n = int(args[1]) if len(args) > 1 else 1
 col = sources.collecter(cfg, tz, datetime.combine(debut + timedelta(days=n), datetime.min.time()) if cfg["source"]["type"] == "demo" else None)
 print(f"Source : {col.mode} — {len(col.pieces)} pièces, {len(col.evenements)} événements")
-P, E, V = I.preparer(col.pieces, col.evenements, col.personnes, cfg)
+P, E, V = I.preparer(col.pieces, col.evenements, col.personnes, cfg, col.agent)
 for k in range(n):
     j = debut + timedelta(days=k)
     v = V[V["le"].dt.date == j]

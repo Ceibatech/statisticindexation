@@ -99,7 +99,7 @@ def main():
         return 2
 
     # 2. Indicateurs
-    P, E, V = indicateurs.preparer(col.pieces, col.evenements, col.personnes, cfg)
+    P, E, V = indicateurs.preparer(col.pieces, col.evenements, col.personnes, cfg, col.agent)
     r = indicateurs.construire(P, E, V, cfg, cal, maintenant, a.type, col.personnes, col.mode)
     r.source = {"journal": "SAE MULCV — journal du service Scan + base Alfresco (lecture seule)",
                 "degrade": "SAE MULCV — base Alfresco seule (mode dégradé)",
