@@ -192,7 +192,7 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
     zone = "Zone Sud"
     sous_titre = (f"{date_longue(r.maintenant.date())} · situation à {r.maintenant:%H:%M}" if not hebdo
                   else f"{r.libelle} · situation au {date_longue(r.maintenant.date())} {r.maintenant:%H:%M}")
-    titre = "Indexation SAE — " + ("récapitulatif hebdomadaire" if hebdo else "point du jour")
+    titre = "Indexation SAE — " + {"hebdo": "récapitulatif hebdomadaire", "midi": "point de mi-journée"}.get(r.type, "point du jour")
     ctx = {
         "titre": titre, "sous_titre": sous_titre, "projet": cfg["projet"]["nom"], "client": cfg["projet"]["client"],
         "auteur": cfg["rapport"].get("auteur"), "societe": cfg["rapport"].get("societe"),
@@ -234,9 +234,11 @@ def cal_jours_semaine(r: Rapport, cal) -> list:
 def prochain_envoi(maintenant: datetime, cal) -> str:
     j = maintenant.date()
     for _ in range(10):
-        if cal.ouvre(j) and datetime.combine(j, time(18, 5)) > maintenant + timedelta(minutes=5):
-            suff = " + récapitulatif hebdomadaire (18h20)" if j.weekday() == 4 else ""
-            return f"{date_longue(j)}, 18h05{suff}"
+        if cal.ouvre(j):
+            for h, m, lib in ((12, 30, "12h30"), (18, 0, "18h00")):
+                if datetime.combine(j, time(h, m)) > maintenant + timedelta(minutes=5):
+                    suff = " + récapitulatif hebdomadaire (18h20)" if j.weekday() == 4 and h == 18 else ""
+                    return f"{date_longue(j)}, {lib}{suff}"
         j += timedelta(days=1)
     return "—"
 

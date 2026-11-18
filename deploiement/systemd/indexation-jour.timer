@@ -1,8 +1,8 @@
 [Unit]
-Description=Point d'indexation du jour (lundi-vendredi 18h05)
+Description=Point d'indexation du jour (lundi-vendredi 18h00)
 
 [Timer]
-OnCalendar=Mon..Fri *-*-* 18:05:00 Africa/Abidjan
+OnCalendar=Mon..Fri *-*-* 18:00:00 Africa/Abidjan
 Unit=indexation-rapport@jour.service
 AccuracySec=30s
 

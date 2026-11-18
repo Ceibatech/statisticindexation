@@ -6,7 +6,8 @@ Il complète [`numerisation-stats`](https://github.com/Ceibatech/numerisation-st
 
 | Envoi | Quand | Contenu |
 |---|---|---|
-| Point du jour | lun.–ven. **18h05** | Indexation de la journée, comparée à la moyenne des 10 derniers jours d'indexation à la même heure |
+| Point de mi-journée | lun.–ven. **12h30** | Indexation de la matinée, comparée à la moyenne des 10 derniers jours d'indexation à la même heure |
+| Point du jour | lun.–ven. **18h00** | Indexation de la journée, même comparaison |
 | Récapitulatif | vendredi **18h20** | Semaine vs semaine précédente, tendance sur 20 jours ouvrés |
 
 Expéditeur : `indexation@ceiba-analytics.com` (domaine vérifié dans Resend). Destinataires : md, dac, dac01, dac03, daf, dao, dao01 @ceiba-analytics.com. « Répondre à tous » écrit à toute la liste. Pas d'envoi les week-ends ni les jours fériés de `config.yaml`. Un classeur Excel détaillé est joint à chaque envoi.
@@ -61,7 +62,7 @@ sudo nano .env            # RESEND_API_KEY
 sudo nano config.yaml     # objectifs, jours fériés
 ```
 
-L'installation crée l'environnement Python et deux minuteurs systemd (`indexation-jour`, `indexation-hebdo`) au fuseau **Africa/Abidjan**.
+L'installation crée l'environnement Python et trois minuteurs systemd (`indexation-midi`, `indexation-jour`, `indexation-hebdo`) au fuseau **Africa/Abidjan**.
 
 ```bash
 # Aperçu sans envoi (écrit out/jour-AAAA-MM-JJ.html, les images et le classeur Excel)

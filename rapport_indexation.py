@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Suivi de l'indexation dans le SAE MULCV — CEIBA Analytics.
 
-    python rapport_indexation.py jour        # point du jour (lun.–ven. 18h05)
+    python rapport_indexation.py midi        # point de mi-journée (lun.–ven. 12h30)
+    python rapport_indexation.py jour        # point du jour (lun.–ven. 18h00)
     python rapport_indexation.py hebdo       # récapitulatif de la semaine (vendredi 18h20)
     options :
       --apercu               n'envoie rien : écrit out/<rapport>.html, les images et le classeur Excel
@@ -46,7 +47,7 @@ def charger_env(chemin: Path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("type", choices=["jour", "hebdo"])
+    ap.add_argument("type", choices=["midi", "jour", "hebdo"])
     ap.add_argument("--config", default=str(RACINE / "config.yaml"))
     ap.add_argument("--apercu", action="store_true")
     ap.add_argument("--a", dest="test_dest")

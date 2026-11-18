@@ -1,0 +1,10 @@
+[Unit]
+Description=Point d'indexation de mi-journée (lundi-vendredi 12h30)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 12:30:00 Africa/Abidjan
+Unit=indexation-rapport@midi.service
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

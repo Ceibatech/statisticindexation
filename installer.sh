@@ -50,7 +50,7 @@ chown root:"$UTILISATEUR" "$DOSSIER/.env" && chmod 640 "$DOSSIER/.env"
 echo "▶ Planification systemd (fuseau Africa/Abidjan)"
 cp "$DOSSIER"/deploiement/systemd/* /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now indexation-jour.timer indexation-hebdo.timer
+systemctl enable --now indexation-midi.timer indexation-jour.timer indexation-hebdo.timer
 
 echo
 echo "✅ Installé. Prochains envois :"
