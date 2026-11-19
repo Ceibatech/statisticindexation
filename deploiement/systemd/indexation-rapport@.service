@@ -14,5 +14,6 @@ ExecStart=/opt/statisticindexation/.venv/bin/python /opt/statisticindexation/rap
 StandardOutput=append:/opt/statisticindexation/journal/%i.log
 StandardError=append:/opt/statisticindexation/journal/%i.log
 TimeoutStartSec=900
+Environment=HOME=/root
+# Pas de PrivateTmp : les dossiers de travail sont montés dans des conteneurs Docker
 NoNewPrivileges=true
-PrivateTmp=true

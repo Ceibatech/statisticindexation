@@ -136,7 +136,11 @@ class JournalScan:
                    .decode().splitlines() if "=" in l)
         mdp = self.c.get("mot_de_passe") or env.get("SCAN_DB_PASSWORD", "")
         fichier = self.c.get("fichier", "/data/scan.mv.db")
-        with tempfile.TemporaryDirectory(prefix="indexation-h2-") as tmp:
+        # Dossier de travail hors de /tmp : sous systemd, /tmp peut être privé au service et invisible
+        # du démon Docker, qui monterait alors un dossier vide dans le conteneur de lecture.
+        travail = Path(self.c.get("dossier_travail") or Path(__file__).resolve().parent.parent / "data" / "tmp")
+        travail.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="indexation-h2-", dir=travail) as tmp:
             w = Path(tmp)
             w.chmod(0o777)  # l'image tourne sous l'utilisateur 10001
             _docker("cp", f"{ctn}:{fichier}", str(w / "scan.mv.db"))
@@ -158,6 +162,8 @@ class JournalScan:
                         'exec java -cp /w/h2.jar org.h2.tools.RunScript -url "jdbc:h2:file:/w/scan" '
                         f'-user sa -password "$H2PW" -script /w/{script}', timeout=300)
             executer("export.sql")
+            if not (w / "job.csv").exists() or not (w / "audit.csv").exists():
+                raise RuntimeError(f"Export du journal Scan introuvable dans {w} : le dossier n'est pas partagé avec Docker")
             try:
                 executer("agent.sql")
                 agent = lire_csv(w / "agent.csv")
