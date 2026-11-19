@@ -24,6 +24,19 @@ pleins = Counter((a.get("indexed_at") or "")[:10] for a in agent if a.get("outco
 for j in sorted(jours)[-5:]:
     print(f"    {j}  {pleins[j]:6} / {jours[j]}")
 print("  erreurs :", Counter((a.get("error") or "")[:70] for a in agent if a.get("error")).most_common(4))
+print("  10 dernières pièces examinées :")
+for a in sorted(agent, key=lambda x: x.get("indexed_at") or "")[-10:]:
+    print(f"    {a.get('indexed_at','')[:19]}  {a.get('outcome'):14} ocr {a.get('ocr_ms') or 0:>6} ms  {a.get('node_id')}")
+# Dernier modificateur Alfresco des pièces « à vérifier » : l'agent ne prend que celles de l'analyse du scan
+jobs, _, _ = sources.JournalScan(cfg["source"].get("journal_scan") or {}).lire()
+attente = [j["node_id"] for j in jobs if j.get("status") == "REVIEW_REQUIRED"]
+alf = sources.AlfrescoSql(cfg["source"].get("alfresco_sql"))
+noeuds = {n["id"]: n for n in alf.noeuds(cfg["perimetre"]["racine_scan_uuid"], attente)}
+print(f"\n=== Dernier modificateur des {len(attente)} pièces à vérifier (Alfresco)")
+for k, n in Counter(noeuds[i]["modifieur"] if i in noeuds else "(absente d'Alfresco)" for i in attente).most_common(8):
+    print(f"  {n:7}  {k}")
+der = [noeuds[a["node_id"]] for a in sorted(agent, key=lambda x: x.get("indexed_at") or "")[-5:] if a["node_id"] in noeuds]
+print("  modificateur des 5 dernières pièces sautées :", [(d["modifieur"], d["modifie_le"][:19]) for d in der])
 PY
 echo; echo "=== Journal du service Scan (agent, 24 h)"
 docker logs "$SCAN" --since 24h 2>&1 | grep -E 'AGENT_' | cut -c1-200 | tail -15
