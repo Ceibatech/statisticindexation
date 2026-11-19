@@ -544,7 +544,9 @@ class Demo:
                         evts.append({"id": eid, "piece": p["id"], "evenement": "AGENT_INDEXED", "acteur": u, "le": t,
                                      "details": "{}"})
                         p.update(modifie_par=u, modifie_le=t)
-                        self.agent.append({"node_id": p["id"], "outcome": "FILLED", "total_ms": str(rng.randint(25000, 60000))})
+                        self.agent.append({"node_id": p["id"], "outcome": "FILLED", "total_ms": str(rng.randint(25000, 60000)),
+                                           "indexed_at": t.isoformat() + "Z", "model": "qwen2.5:7b",
+                                           "fields": json.dumps({"mulcv:nature": "x", "mulcv:lotNumber": "1", "mulcv:subject": "y"})})
                         continue
                     eid += 1
                     evts.append({"id": eid, "piece": p["id"], "evenement": "METADATA_SAVED", "acteur": u,

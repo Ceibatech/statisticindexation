@@ -9,7 +9,8 @@ import pandas as pd
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from . import graphiques
-from .indicateurs import JOURS, LIBELLES_ANOMALIES, LIBELLES_CHAMPS, LIBELLES_ETATS, Rapport, significatif
+from .indicateurs import (JOURS, LIBELLES_ANOMALIES, LIBELLES_CHAMPS, LIBELLES_ETATS, RESULTATS_AGENT, Rapport,
+                          significatif)
 
 MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
 NIVEAUX = {
@@ -133,6 +134,33 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
     if not lignes:
         t_ind["note"] = "Aucune validation sur la période."
 
+    # Humains vs agent IA
+    d = r.duel or {}
+    t_duel = None
+    if d.get("actif"):
+        def ligne(lib, h, ag, g=False):
+            return [{"v": lib}, {"v": h, "g": g}, {"v": ag, "g": g}]
+        lignes_duel = [
+            ligne("Pièces indexées", n(d["h_pieces"]), n(d["a_pieces"]), True),
+            ligne("Temps médian par pièce", duree(d["h_temps"]), duree(d["a_temps"])),
+            ligne("Pièces par heure", n(d["h_cadence"]), n(d["a_cadence"])),
+            ligne("Champs remplis par pièce", "—", "—" if d["a_champs"] is None else f"{d['a_champs']:.1f}".replace(".", ",")),
+            ligne("Validées par l'archiviste", n(d["h_validees"]), n(d["a_validees"])),
+            ligne("Exactitude (champs gardés à la validation)",
+                  f"{pct(d['h_sans_correction'])} sans correction" if d["h_sans_correction"] is not None else "—",
+                  f"{pct(d['a_exactitude'])} ({n(d['a_gardes'])} gardés, {n(d['a_corriges'])} corrigés)" if d["a_exactitude"] is not None else "—"),
+        ]
+        res = d["a_resultats"]
+        detail = " · ".join(f"{RESULTATS_AGENT.get(k, k)} : {n(v)}" for k, v in sorted(res.items(), key=lambda x: -x[1]))
+        t_duel = {"titre": "Humains vs agent IA",
+                  "entetes": [{"l": ""}, {"l": f"Indexeurs humains ({n(d['h_indexeurs'])})", "d": 1}, {"l": "Agent IA CEIBA", "d": 1}],
+                  "lignes": lignes_duel,
+                  "note": (f"Agent : {n(d['a_examinees'])} pièces examinées sur la période" + (f" — {detail}." if detail else ".")
+                           + f" Depuis son lancement : {n(d['a_total'])} pièces remplies sur {n(d['a_total_examinees'])} examinées. "
+                           "Temps de l'agent : traitement réel (OCR + modèle) ; temps humain : écart entre deux pièces indexées. "
+                           "L'agent ne remplit que des champs vides, chaque valeur justifiée par une citation du PDF ; "
+                           "ses pièces restent à valider par l'archiviste.")}
+
     # Parcours des pièces (états courants)
     ordre = ["NON_SUIVI", "QUEUED", "RETRY", "ANALYSING", "ERROR", "REVIEW_REQUIRED", "APPROVED", "DECLARING", "FILING",
              "FILE_ERROR", "ARCHIVED"]
@@ -204,7 +232,7 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
         "libelle_production": r.libelle + (" (jusqu'à " + f"{r.maintenant:%H:%M})" if not hebdo else ""),
         "tuiles": tuiles, "tuiles_q": tuiles_q, "points": points,
         "g1_titre": g1[0], "g1_sous_titre": g1[1], "g_temps": "g_temps" in images,
-        "t_ind": t_ind, "t_etats": t_etats, "t_age": t_age, "t_champs": t_champs, "t_anom": t_anom, "t_rub": t_rub,
+        "t_ind": t_ind, "t_duel": t_duel, "t_etats": t_etats, "t_age": t_age, "t_champs": t_champs, "t_anom": t_anom, "t_rub": t_rub,
         "vue": vue, "source": r.source, "demo": r.mode == "demo", "degrade": r.mode == "degrade",
         "genere": f"{r.maintenant:%d/%m/%Y à %H:%M}", "prochain": prochain_envoi(r.maintenant, cal),
         "rectificatif": None, "pieces_jointes": None, "zone": zone,

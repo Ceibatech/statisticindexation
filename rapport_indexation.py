@@ -73,7 +73,8 @@ def main():
         return 0
     store = Store(str(RACINE / cfg["stockage"]["base_sqlite"]))
     cle = f"{a.type}-{maintenant:%Y-%m-%d}"
-    if store.deja_envoye(cle) and not (a.forcer or a.apercu or a.test_dest):
+    debut_creneau = datetime.combine(maintenant.date(), time(11, 30) if a.type == "midi" else time(17, 0))
+    if store.deja_envoye(cle, debut_creneau) and not (a.forcer or a.apercu or a.test_dest):
         log.info("Rapport %s déjà envoyé (--forcer pour renvoyer).", cle)
         return 0
 

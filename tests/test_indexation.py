@@ -202,3 +202,19 @@ def test_agent_ia_compte_comme_indexeur():
     assert c["indexees"] == 4 and c["par_agent"] == 2 and c["agent_indexations"] == 2
     assert c["indexeurs"] == 1 and c["temps_med"] == 120.0 and c["agent_temps_med"] == 40.0
     assert P.set_index("id").loc["p0", "indexe_par"] == agent
+
+
+def test_duel_agent_sans_droit_et_anti_doublon(tmp_path):
+    agent = "service-account-ceiba-ai-agent"
+    pieces = [piece("p0"), piece("p1"), piece("p2")]
+    evts = [evt(1, "p0", "METADATA_SAVED", "awa", 9, 0), evt(2, "p1", "METADATA_SAVED", "awa", 9, 4)]
+    lignes = [{"node_id": f"p{i}", "outcome": "NO_PERMISSION", "indexed_at": "2026-11-17T08:0%dZ" % i} for i in range(3)]
+    P, E, V = I.preparer(pieces, evts, {}, CFG, lignes)
+    r = I.construire(P, E, V, CFG, CAL, datetime(2026, 11, 17, 18), "jour", {}, "journal")
+    assert r.duel["a_examinees"] == 3 and r.duel["a_pieces"] == 0 and r.duel["h_pieces"] == 2
+    assert any(c["titre"] == "L'agent IA n'a pas le droit d'écrire" for c in r.constats)
+    from indexation.store import Store
+    s = Store(str(tmp_path / "t.db"))
+    s.cx.execute("INSERT INTO envoi VALUES ('jour-2026-11-19','2026-11-19 08:42:20',NULL,'x')")
+    assert not s.deja_envoye("jour-2026-11-19", datetime(2026, 11, 19, 17))   # envoi du matin : 18h00 part quand même
+    assert s.deja_envoye("jour-2026-11-19", datetime(2026, 11, 19, 8))

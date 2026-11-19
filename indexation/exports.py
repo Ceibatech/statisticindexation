@@ -119,6 +119,15 @@ def classeur(r: Rapport, cfg: dict, ctx: dict) -> bytes:
              {"Déposée le": dt, "Analysée le": dt, "Indexée le": dt, "Validée le": dt, "Versée le": dt, "Dernière modification": dt,
               "Temps d'indexation (s)": "0", "Attente avant indexation (h)": "0.0"})
 
+    if ctx.get("t_duel"):
+        _feuille(wb, "Humains vs agent IA", [h["l"] or "Indicateur" for h in ctx["t_duel"]["entetes"]],
+                 [[c["v"] for c in l] for l in ctx["t_duel"]["lignes"]], {"Indicateur": 44})
+    G = r.validations.attrs.get("agent") if r.validations is not None else None
+    if G is not None and len(G):
+        _feuille(wb, "Agent IA (pièces)", ["Pièce (nodeId)", "Résultat", "Le", "Temps total (s)", "Champs remplis", "Modèle", "Erreur"],
+                 [[x["node_id"], x["outcome"], _py(x["le"]), _py(x["total_s"]), ", ".join(LIBELLES_CHAMPS.get(k, k) for k in x["champs"]),
+                   x["model"], x["error"]] for _, x in G.sort_values("le").iterrows()],
+                 {"Pièce (nodeId)": 38, "Champs remplis": 40}, {"Le": "dd/mm/yyyy hh:mm", "Temps total (s)": "0.0"})
     _feuille(wb, "Méthode", ["Indicateur", "Définition"], [
         ["Pièce indexée", "Pièce dont les métadonnées ont été enregistrées par une personne (« Enregistrer » dans Share) ; comptée à son 1er enregistrement."],
         ["Datation", "version = historique des versions Alfresco (exact) ; derniere_modification = dernière modification de la pièce ; "

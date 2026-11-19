@@ -63,6 +63,11 @@ afficher(f"Alfresco — versions créées le {jour:%d/%m/%Y} (sur {len(versions)
 afficher(f"Journal Scan — événements le {jour:%d/%m/%Y}",
          Counter((a["event"], a.get("actor")) for a in audit if le_jour(a["at_time"])))
 
+afficher(f"Agent IA — résultats le {jour:%d/%m/%Y} (agent_indexing)",
+         Counter(x.get("outcome") for x in agent if le_jour(x.get("indexed_at"))))
+afficher("Agent IA — résultats depuis son lancement", Counter(x.get("outcome") for x in agent))
+print("  erreurs les plus fréquentes :", Counter((x.get("error") or "")[:60] for x in agent if x.get("error")).most_common(3))
+
 col = sources.collecter(cfg, tz)
 P, E, V = I.preparer(col.pieces, col.evenements, col.personnes, cfg, col.agent)
 v = V[V["le"].dt.date == jour]

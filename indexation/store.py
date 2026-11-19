@@ -15,8 +15,13 @@ class Store:
             CREATE TABLE IF NOT EXISTS collecte (le TEXT, mode TEXT, pieces INTEGER, evenements INTEGER);
         """)
 
-    def deja_envoye(self, cle: str) -> bool:
-        return self.cx.execute("SELECT 1 FROM envoi WHERE cle=?", (cle,)).fetchone() is not None
+    def deja_envoye(self, cle: str, apres: datetime | None = None) -> bool:
+        """Envoi déjà fait pour cette clé ; avec `apres`, seulement s'il a eu lieu à partir de cette heure
+        (un envoi manuel du matin ne bloque pas le créneau automatique du soir)."""
+        r = self.cx.execute("SELECT envoye_le FROM envoi WHERE cle=?", (cle,)).fetchone()
+        if r is None:
+            return False
+        return apres is None or datetime.fromisoformat(r[0]) >= apres
 
     def noter_envoi(self, cle, resend_id, sujet):
         self.cx.execute("INSERT OR REPLACE INTO envoi VALUES (?,?,?,?)", (cle, datetime.now().isoformat(sep=" "), resend_id, sujet))

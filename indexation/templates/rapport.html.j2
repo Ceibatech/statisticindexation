@@ -101,6 +101,11 @@
   {{ tableau(t_ind) }}
 </td></tr>
 
+{% if t_duel %}<tr><td style="padding:18px 26px 4px;">
+  {{ section(t_duel.titre, "Le même travail, fait par les indexeurs et par l'agent d'indexation") }}
+  {{ tableau(t_duel) }}
+</td></tr>{% endif %}
+
 {% if g_temps %}<tr><td style="padding:18px 26px 4px;">
   {{ section("Temps pour indexer une pièce", "Répartition des temps mesurés sur la période") }}
   <img src="cid:g_temps" width="628" alt="Répartition des temps d'indexation" style="display:block;width:100%;max-width:628px;height:auto;border:0;">

@@ -207,6 +207,13 @@ def preparer(pieces: list[dict], evenements: list[dict], personnes: dict, cfg: d
                 duree[a["node_id"]] = float(a["total_ms"]) / 1000
         except (TypeError, ValueError):
             continue
+    G = pd.DataFrame(agent or [], columns=["node_id", "outcome", "attempts", "fields", "ocr_ms", "model_ms", "total_ms",
+                                            "model", "indexed_at", "error"])
+    G["le"] = pd.to_datetime(G["indexed_at"], errors="coerce", utc=True).dt.tz_convert(
+        cfg["projet"]["fuseau_horaire"]).dt.tz_localize(None)
+    G["total_s"] = pd.to_numeric(G["total_ms"], errors="coerce") / 1000
+    G["champs"] = G["fields"].map(lambda f: {k: v for k, v in _j(f).items() if str(k).startswith("mulcv:")})
+    V.attrs["agent"] = G
     if duree:
         t = V["piece"].map(duree)
         sel = V["agent"] & t.notna()
@@ -357,6 +364,59 @@ def vieillissement(S: pd.DataFrame, t: datetime, cal: Calendrier) -> dict:
 # ---------------------------------------------------------------------------
 #  Rapport
 # ---------------------------------------------------------------------------
+RESULTATS_AGENT = {
+    "FILLED": "Pièces remplies et enregistrées", "NOTHING_FOUND": "Lues, rien de sûr à remplir",
+    "SKIPPED_HUMAN": "Laissées : déjà touchées par une personne", "NO_PERMISSION": "Refusées : pas le droit d'écrire",
+    "TOO_LARGE": "Fichier trop volumineux", "ERROR": "Erreurs",
+}
+
+
+def duel(P, V, a, b) -> dict:
+    """Humains vs agent IA sur [a, b[ : volume, vitesse, ce que l'archiviste garde de leur travail."""
+    G = V.attrs.get("agent")
+    G = G if G is not None else pd.DataFrame(columns=["node_id", "outcome", "le", "total_s", "champs"])
+    v = V[_entre(V["le"], a, b)]
+    vh, va = v[~v["agent"]], v[v["agent"]]
+    agents = set(V.loc[V["agent"], "acteur"]) | set(G.get("acteur", []))
+    ind = P[_entre(P["indexe_le"], a, b)]
+    ind_h = ind[~ind["indexe_par"].isin(agents) & ind["indexe_par"].notna()]
+    g = G[_entre(G["le"], a, b)]
+    remplies = g[g["outcome"] == "FILLED"]
+    h = heures_actives(vh)
+    # contrôle de l'archiviste sur les pièces remplies par l'agent (validées pendant la période)
+    snap = P.set_index("id")
+    gardes = corriges = 0
+    val_agent = 0
+    for _, x in G[G["outcome"] == "FILLED"].iterrows():
+        if x["node_id"] not in snap.index:
+            continue
+        p = snap.loc[x["node_id"]]
+        if pd.isna(p["valide_le"]) or not (a <= p["valide_le"] < b):
+            continue
+        val_agent += 1
+        v_ok = _j(p["validation"])
+        for k, val in x["champs"].items():
+            if str(val).strip() == str(v_ok.get(k, "")).strip():
+                gardes += 1
+            else:
+                corriges += 1
+    val_h = P[_entre(P["valide_le"], a, b) & P["indexe_par"].notna() & ~P["indexe_par"].isin(agents)]
+    return {
+        "h_pieces": int(len(ind_h)), "h_indexeurs": int(vh["acteur"].nunique()), "h_temps": _q(vh["temps_s"], .5),
+        "h_cadence": (len(vh) / h) if h > 0 else None, "h_validees": int(len(val_h)),
+        "h_sans_correction": (float((~val_h["corrigee"]).mean()) if len(val_h) else None),
+        "a_examinees": int(len(g)), "a_pieces": int(len(remplies)), "a_temps": _q(remplies["total_s"], .5),
+        "a_cadence": (3600 / _q(remplies["total_s"], .5)) if len(remplies) and _q(remplies["total_s"], .5) else None,
+        "a_champs": (float(remplies["champs"].map(len).mean()) if len(remplies) else None),
+        "a_validees": val_agent, "a_exactitude": (gardes / (gardes + corriges)) if gardes + corriges else None,
+        "a_gardes": gardes, "a_corriges": corriges,
+        "a_resultats": g["outcome"].value_counts().to_dict(),
+        "a_total": int((G["outcome"] == "FILLED").sum()), "a_total_examinees": int(len(G)),
+        "a_resultats_total": G["outcome"].value_counts().to_dict(),
+        "actif": bool(len(G)) or bool(len(va)),
+    }
+
+
 @dataclass
 class Rapport:
     type: str
@@ -381,6 +441,7 @@ class Rapport:
     pieces: pd.DataFrame | None = None
     validations: pd.DataFrame | None = None
     personnes: dict = field(default_factory=dict)
+    duel: dict = field(default_factory=dict)
 
 
 def _moyenne(dicts: list[dict]) -> dict:
@@ -456,6 +517,7 @@ def construire(P, E, V, cfg, cal: Calendrier, maintenant: datetime, type_: str, 
                 par_indexeur(V, P, a, b, ref_jours if type_ != "hebdo" else [], personnes),
                 flux, matrice, horaire, stock, etats, rub, cumul, mode=mode, pieces=P, validations=V,
                 personnes=personnes)
+    r.duel = duel(P, V, a, b)
     r.constats = constats(r, cfg)
     return r
 
@@ -513,6 +575,20 @@ def constats(r: Rapport, cfg: dict) -> list[dict]:
         lvl = "ok" if t <= o["temps_cible_s"] else "attention"
         out.append((lvl, "Temps d'indexation", f"Temps médian par pièce : {_d(t)} (90 % des pièces en moins de {_d(c['temps_p90'])}), "
                     f"pour une cible de {_d(o['temps_cible_s'])}. Mesuré sur {c['temps_mesures']} enchaînements."))
+    d = r.duel or {}
+    res = d.get("a_resultats") or {}
+    if d.get("a_examinees") and res.get("NO_PERMISSION", 0) >= .5 * d["a_examinees"]:
+        out.append(("critique", "L'agent IA n'a pas le droit d'écrire",
+                    f"{res['NO_PERMISSION']} des {d['a_examinees']} pièces examinées par l'agent ont été refusées (droit de "
+                    "modification). Ajouter service-account-ceiba-ai-agent comme Collaborateur du site mulcv."))
+    elif d.get("a_examinees") and d.get("a_pieces", 0) == 0:
+        principal = max(res, key=res.get)
+        out.append(("attention", "L'agent IA n'a rempli aucune pièce",
+                    f"{d['a_examinees']} pièces examinées, aucune enregistrée ; résultat le plus fréquent : "
+                    f"{RESULTATS_AGENT.get(principal, principal).lower()} ({res[principal]})."))
+    elif d.get("actif") and not d.get("a_examinees"):
+        out.append(("attention", "Agent IA à l'arrêt", "L'agent IA n'a examiné aucune pièce sur la période "
+                    "(désactivé, hors de ses horaires ou limite quotidienne atteinte)."))
     if c.get("agent_indexations"):
         out.append(("info", "Agent IA d'indexation",
                     f"L'agent IA a indexé {c['agent_indexations']} pièces ({c['par_agent']} en première indexation), "

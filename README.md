@@ -32,6 +32,7 @@ dépôt du PDF par un poste      cm:created (service-account-mulcv-depot-posteN)
 - **Indicateurs complémentaires** : pièces versées et délai de versement, attente avant indexation, part des pièces acceptées sans correction, taux de reconnaissance automatique.
 - **Lecture de l'analyste** : constats classés Critique / Attention / Conforme / Info (objectif, stock qui augmente, pièces anciennes, indexeur nettement plus lent que l'équipe, taux de correction, validations en lot, analyses en échec, pièces validées non versées…).
 - **Par indexeur** : pièces validées, part, temps médian et 90ᵉ centile, pièces par heure, champs corrigés par pièce, horaires, saisies enregistrées mais non validées.
+- **Humains vs agent IA** : pièces indexées, temps par pièce, pièces par heure, champs remplis, exactitude à la validation de l'archiviste ; résultats de l'agent (remplies, rien trouvé, laissées à l'humain, refus de droit, erreurs).
 - **Graphiques** : indexations heure par heure (ou par jour pour l'hebdo), répartition des temps d'indexation, tendance sur 20 jours ouvrés, stock à indexer en fin de journée.
 - **Parcours des pièces** (état courant), ancienneté du stock, date de résorption au rythme actuel.
 - **Qualité** : champs les plus corrigés par les indexeurs, anomalies relevées par l'analyse, relances, échecs.
@@ -69,6 +70,10 @@ L'installation crée l'environnement Python et trois minuteurs systemd (`indexat
 sudo .venv/bin/python rapport_indexation.py jour --apercu
 # Envoi de test à une seule adresse
 sudo .venv/bin/python rapport_indexation.py jour --a dao@ceiba-analytics.com
+# Qui a touché les pièces un jour donné (Alfresco, versions, journal Scan, agent IA)
+sudo .venv/bin/python outils/qui.py 2026-11-18
+# Diagnostic des envois automatiques
+sudo bash outils/diagnostic.sh
 # Contrôle des chiffres par jour et par indexeur
 sudo .venv/bin/python outils/controle.py 2026-11-17
 # Démonstration sans accès au SAE
