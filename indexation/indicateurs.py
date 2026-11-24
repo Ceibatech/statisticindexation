@@ -371,6 +371,24 @@ RESULTATS_AGENT = {
 }
 
 
+def par_boite(P, V, a, b) -> pd.DataFrame:
+    """Par carton (boîte) : pièces, indexées par les humains et par l'agent (total et sur la période), restant."""
+    agents = set(V.loc[V["agent"], "acteur"])
+    X = P.dropna(subset=["carton"]).copy()
+    X["ia"] = X["indexe_par"].isin(agents)
+    X["hum"] = X["indexe_le"].notna() & ~X["ia"]
+    X["per"] = _entre(X["indexe_le"], a, b)
+    g = X.groupby("carton").agg(conteneur=("conteneur", "first"), pieces=("id", "size"),
+                                humains=("hum", "sum"), agent=("ia", "sum"),
+                                humains_periode=("hum", lambda s: int((s & X.loc[s.index, "per"]).sum())),
+                                agent_periode=("ia", lambda s: int((s & X.loc[s.index, "per"]).sum())),
+                                derniere=("indexe_le", "max"))
+    g["indexees"] = g["humains"] + g["agent"]
+    g["restant"] = g["pieces"] - g["indexees"]
+    g["avancement"] = g["indexees"] / g["pieces"]
+    return g.sort_values(["derniere"], ascending=False, na_position="last")
+
+
 def duel(P, V, a, b) -> dict:
     """Humains vs agent IA sur [a, b[ : volume, vitesse, ce que l'archiviste garde de leur travail."""
     G = V.attrs.get("agent")
@@ -411,6 +429,8 @@ def duel(P, V, a, b) -> dict:
         "a_validees": val_agent, "a_exactitude": (gardes / (gardes + corriges)) if gardes + corriges else None,
         "a_gardes": gardes, "a_corriges": corriges,
         "a_resultats": g["outcome"].value_counts().to_dict(),
+        "a_erreurs": (g.loc[g["outcome"] == "ERROR", "error"].fillna("").astype(str).str.slice(0, 110).value_counts().head(3).to_dict()
+                      if "error" in g else {}),
         "a_total": int((G["outcome"] == "FILLED").sum()), "a_total_examinees": int(len(G)),
         "a_resultats_total": G["outcome"].value_counts().to_dict(),
         "actif": bool(len(G)) or bool(len(va)),
@@ -442,6 +462,7 @@ class Rapport:
     validations: pd.DataFrame | None = None
     personnes: dict = field(default_factory=dict)
     duel: dict = field(default_factory=dict)
+    boites: pd.DataFrame | None = None
 
 
 def _moyenne(dicts: list[dict]) -> dict:
@@ -472,7 +493,8 @@ def construire(P, E, V, cfg, cal: Calendrier, maintenant: datetime, type_: str, 
         ref_lib, libelle = f"moyenne des {len(ref_jours)} derniers jours d'indexation", f"Journée du {j:%d/%m/%Y}"
     # tendance : 20 derniers jours ouvrés (jour inclus)
     jours = sorted([j] + cal.precedents(j, 19)) if cal.ouvre(j) else sorted(cal.precedents(j, 20))
-    debut_proj = datetime.fromisoformat(cfg["projet"]["date_debut"]).date()
+    hum = P.loc[P["indexe_par"].notna() & ~P["indexe_par"].isin(set(V.loc[V["agent"], "acteur"])), "indexe_le"]
+    debut_proj = hum.min().date() if hum.notna().any() else datetime.fromisoformat(cfg["projet"]["date_debut"]).date()
     jours = [d for d in jours if d >= debut_proj] or [j]
     flux = flux_quotidien(P, V, jours)
     semaine = [d for d in jours if d >= a.date()] if type_ == "hebdo" else jours[-10:]
@@ -511,6 +533,9 @@ def construire(P, E, V, cfg, cal: Calendrier, maintenant: datetime, type_: str, 
              "dossiers_acheves": int((P.dropna(subset=["dossier"]).groupby("dossier")["indexe_le"].count()
                                       == P.dropna(subset=["dossier"]).groupby("dossier").size()).sum()),
              "indexeurs": int(V["acteur"].nunique()), "temps_med": _q(V["temps_s"], .5)}
+    cumul["debut"] = debut_proj
+    premiers = P.loc[P["indexe_le"].notna() & ~P["indexe_par"].isin(set(V.loc[V["agent"], "acteur"]))].sort_values("indexe_le")
+    cumul["premier_indexeur"] = personnes.get(premiers["indexe_par"].iloc[0], premiers["indexe_par"].iloc[0]) if len(premiers) else None
     cumul["indexeurs"] = int(V.loc[~V["agent"], "acteur"].nunique())
     cumul["temps_med"] = _q(V.loc[~V["agent"], "temps_s"], .5)
     r = Rapport(type_, maintenant, a, b, libelle, cur, ref, ref_lib,
@@ -518,6 +543,7 @@ def construire(P, E, V, cfg, cal: Calendrier, maintenant: datetime, type_: str, 
                 flux, matrice, horaire, stock, etats, rub, cumul, mode=mode, pieces=P, validations=V,
                 personnes=personnes)
     r.duel = duel(P, V, a, b)
+    r.boites = par_boite(P, V, a, b)
     r.constats = constats(r, cfg)
     return r
 
@@ -583,9 +609,11 @@ def constats(r: Rapport, cfg: dict) -> list[dict]:
                     "modification). Ajouter service-account-ceiba-ai-agent comme Collaborateur du site mulcv."))
     elif d.get("a_examinees") and d.get("a_pieces", 0) == 0:
         principal = max(res, key=res.get)
-        out.append(("attention", "L'agent IA n'a rempli aucune pièce",
+        err = next(iter(d.get("a_erreurs") or {}), "")
+        out.append(("critique" if principal == "ERROR" else "attention", "L'agent IA n'a rempli aucune pièce",
                     f"{d['a_examinees']} pièces examinées, aucune enregistrée ; résultat le plus fréquent : "
-                    f"{RESULTATS_AGENT.get(principal, principal).lower()} ({res[principal]})."))
+                    f"{RESULTATS_AGENT.get(principal, principal).lower()} ({res[principal]})"
+                    + (f" — « {err} »." if principal == "ERROR" and err else ".")))
     elif d.get("actif") and not d.get("a_examinees"):
         out.append(("attention", "Agent IA à l'arrêt", "L'agent IA n'a examiné aucune pièce sur la période "
                     "(désactivé, hors de ses horaires ou limite quotidienne atteinte)."))

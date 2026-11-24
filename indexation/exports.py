@@ -119,6 +119,13 @@ def classeur(r: Rapport, cfg: dict, ctx: dict) -> bytes:
              {"Déposée le": dt, "Analysée le": dt, "Indexée le": dt, "Validée le": dt, "Versée le": dt, "Dernière modification": dt,
               "Temps d'indexation (s)": "0", "Attente avant indexation (h)": "0.0"})
 
+    B = r.boites
+    if B is not None and len(B):
+        _feuille(wb, "Par boîte", ["Carton", "Conteneur", "Pièces", "Indexées par les humains", "Indexées par l'agent IA",
+                                   "Humains (période)", "Agent IA (période)", "Restant", "Avancement", "Dernière indexation"],
+                 [[k, x["conteneur"], int(x["pieces"]), int(x["humains"]), int(x["agent"]), int(x["humains_periode"]),
+                   int(x["agent_periode"]), int(x["restant"]), float(x["avancement"]), _py(x["derniere"])] for k, x in B.iterrows()],
+                 {"Carton": 26, "Conteneur": 14}, {"Avancement": "0%", "Dernière indexation": "dd/mm/yyyy hh:mm"})
     if ctx.get("t_duel"):
         _feuille(wb, "Humains vs agent IA", [h["l"] or "Indicateur" for h in ctx["t_duel"]["entetes"]],
                  [[c["v"] for c in l] for l in ctx["t_duel"]["lignes"]], {"Indicateur": 44})

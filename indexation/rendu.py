@@ -157,9 +157,28 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
                   "lignes": lignes_duel,
                   "note": (f"Agent : {n(d['a_examinees'])} pièces examinées sur la période" + (f" — {detail}." if detail else ".")
                            + f" Depuis son lancement : {n(d['a_total'])} pièces remplies sur {n(d['a_total_examinees'])} examinées. "
-                           "Temps de l'agent : traitement réel (OCR + modèle) ; temps humain : écart entre deux pièces indexées. "
+                           + ("Erreurs : " + " ; ".join(f"« {k or 'sans message'} » ({v})" for k, v in d.get("a_erreurs", {}).items()) + ". "
+                              if d.get("a_erreurs") else "")
+                           + "Temps de l'agent : traitement réel (OCR + modèle) ; temps humain : écart entre deux pièces indexées. "
                            "L'agent ne remplit que des champs vides, chaque valeur justifiée par une citation du PDF ; "
                            "ses pièces restent à valider par l'archiviste.")}
+
+    # Par boîte : cartons travaillés sur la période, humains vs agent
+    B = r.boites if r.boites is not None else pd.DataFrame()
+    Bp = B[(B["humains_periode"] + B["agent_periode"]) > 0] if len(B) else B
+    t_boites = {"titre": "Par boîte (carton)",
+                "entetes": [{"l": "Carton"}, {"l": "Pièces", "d": 1}, {"l": "Humains", "d": 1}, {"l": "Agent IA", "d": 1},
+                            {"l": "Restant", "d": 1}, {"l": "Avancement", "d": 1}],
+                "lignes": [[{"v": k, "g": 1, "s": x["conteneur"]}, {"v": n(x["pieces"])},
+                            {"v": n(x["humains"]), "s": f"+{n(x['humains_periode'])} sur la période" if x["humains_periode"] else None},
+                            {"v": n(x["agent"]), "s": f"+{n(x['agent_periode'])} sur la période" if x["agent_periode"] else None},
+                            {"v": n(x["restant"])}, {"v": pct(x["avancement"])}] for k, x in Bp.head(20).iterrows()],
+                "total": ["Total", n(Bp["pieces"].sum()), n(Bp["humains"].sum()), n(Bp["agent"].sum()), n(Bp["restant"].sum()),
+                          pct(Bp["indexees"].sum() / Bp["pieces"].sum()) if len(Bp) and Bp["pieces"].sum() else "—"] if len(Bp) else None,
+                "note": (f"Cartons où au moins une pièce a été indexée sur la période ({n(len(Bp))}"
+                         + (", 20 premiers affichés" if len(Bp) > 20 else "") + ") ; totaux depuis le début. "
+                         f"{n((B['indexees'] >= B['pieces']).sum()) if len(B) else 0} cartons entièrement indexés sur {n(len(B))}. "
+                         "Détail de tous les cartons dans le fichier Excel.")}
 
     # Parcours des pièces (états courants)
     ordre = ["NON_SUIVI", "QUEUED", "RETRY", "ANALYSING", "ERROR", "REVIEW_REQUIRED", "APPROVED", "DECLARING", "FILING",
@@ -191,7 +210,8 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
              "lignes": [[{"v": k, "g": 1}, {"v": x["chemin"] or "—"}, {"v": n(x["pieces"])}] for k, x in rb.iterrows()]}
 
     cu = r.cumul
-    vue = {"titre": "Depuis le début de l'indexation", "sous_titre": f"depuis le {datetime.fromisoformat(cfg['projet']['date_debut']):%d/%m/%Y}",
+    vue = {"titre": "Depuis le début de l'indexation",
+           "sous_titre": f"depuis le {cu['debut']:%d/%m/%Y}" + (f", première pièce indexée par {cu['premier_indexeur']}" if cu.get("premier_indexeur") else ""),
            "tuiles": [
                {"libelle": "Pièces indexées", "valeur": n(cu["indexees"]), "detail": f"sur {n(cu['pieces'])} pièces suivies",
                 "barre": round(cu["indexees"] / cu["pieces"] * 100) if cu["pieces"] else 0},
@@ -232,7 +252,7 @@ def contexte(r: Rapport, cfg: dict, cal) -> tuple[dict, dict[str, bytes], str]:
         "libelle_production": r.libelle + (" (jusqu'à " + f"{r.maintenant:%H:%M})" if not hebdo else ""),
         "tuiles": tuiles, "tuiles_q": tuiles_q, "points": points,
         "g1_titre": g1[0], "g1_sous_titre": g1[1], "g_temps": "g_temps" in images,
-        "t_ind": t_ind, "t_duel": t_duel, "t_etats": t_etats, "t_age": t_age, "t_champs": t_champs, "t_anom": t_anom, "t_rub": t_rub,
+        "t_ind": t_ind, "t_duel": t_duel, "t_boites": t_boites, "t_etats": t_etats, "t_age": t_age, "t_champs": t_champs, "t_anom": t_anom, "t_rub": t_rub,
         "vue": vue, "source": r.source, "demo": r.mode == "demo", "degrade": r.mode == "degrade",
         "genere": f"{r.maintenant:%d/%m/%Y à %H:%M}", "prochain": prochain_envoi(r.maintenant, cal),
         "rectificatif": None, "pieces_jointes": None, "zone": zone,
